@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-lol-dark text-white;
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-gradient-to-b from-lol-gray to-lol-dark border-2 border-lol-gold rounded-lg shadow-xl;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .card:hover {
+    @apply transform scale-105 shadow-2xl;
+  }
+
+  .btn-primary {
+    @apply bg-lol-gold text-lol-dark px-6 py-3 rounded-lg font-bold uppercase tracking-wider;
+    @apply hover:bg-yellow-500 transition-all duration-200 transform hover:scale-105;
+    @apply shadow-lg hover:shadow-xl;
+  }
+
+  .game-board {
+    @apply bg-gradient-to-b from-gray-900 to-lol-dark min-h-screen;
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+  20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+.shake {
+  animation: shake 0.5s;
+}

@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(cat:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(mongod:*)",
+      "Bash(curl:*)",
+      "Bash(mongosh:*)",
+      "Bash(mongo --eval:*)",
+      "Bash(node check-db.js:*)",
+      "Bash(npx kill-port:*)",
+      "Bash(node fix-email-index.js:*)",
+      "Bash(npm start)",
+      "Bash(npm run build:*)",
+      "Bash(set CSC_IDENTITY_AUTO_DISCOVERY=false)",
+      "Bash(dir:*)",
+      "Bash(npx electron-packager:*)",
+      "Bash(node check-packs.js:*)",
+      "Bash(node:*)",
+      "Bash(python:*)",
+      "Bash(cmd /c taskkill /PID 5316 /F)",
+      "Bash(tree:*)"
+    ]
+  }
+}
