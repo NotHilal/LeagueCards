@@ -442,7 +442,7 @@ function createPlayerState(playerId, playerName) {
     hand: hand,
     field: {
       monsters: [null, null, null, null, null],
-      spellTrap: [null, null, null, null, null]
+      itemsAndRunes: [null, null, null, null, null]
     },
     graveyard: [],
     banished: []

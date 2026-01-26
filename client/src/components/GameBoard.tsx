@@ -60,7 +60,7 @@ const RUNE_DURATION = 3; // Default duration in turns
 export default function GameBoard({ mode }: GameBoardProps) {
   const navigate = useNavigate();
   const { roomId } = useParams();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [socket, setSocket] = useState<Socket | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
@@ -113,6 +113,14 @@ export default function GameBoard({ mode }: GameBoardProps) {
       console.log('Connected to server');
 
       if (mode === 'solo') {
+        // Must join first before starting solo game
+        newSocket.emit('join', user?.username || 'Player');
+      }
+    });
+
+    newSocket.on('joined', () => {
+      console.log('Joined server, starting solo game...');
+      if (mode === 'solo') {
         newSocket.emit('start_solo');
       }
     });
@@ -126,10 +134,14 @@ export default function GameBoard({ mode }: GameBoardProps) {
       setGameState(state);
     });
 
+    newSocket.on('error', (err: { message: string }) => {
+      console.error('Socket error:', err.message);
+    });
+
     return () => {
       newSocket.close();
     };
-  }, [mode, roomId]);
+  }, [mode, roomId, user?.username]);
 
   // Activate a rune
   const activateRune = (rune: RuneCard) => {
