@@ -17,22 +17,26 @@ interface CardProps {
     rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
     image?: string;
   };
-  size?: 'small' | 'medium' | 'large';
+  size?: 'tiny' | 'small' | 'medium' | 'large' | 'field' | 'hand' | 'opponent-hand';
   faceDown?: boolean;
   selected?: boolean;
 }
 
 export default function Card({ card, size = 'medium', faceDown = false, selected = false }: CardProps) {
   const sizeClasses = {
-    small: 'w-20',
-    medium: 'w-32',
-    large: 'w-48',
+    tiny: 'w-14 h-[54px]',
+    small: 'w-20 h-[90px]',
+    medium: 'w-32 h-[162px]',
+    large: 'w-48 h-[258px]',
+    field: 'w-24 h-[140px]',        // 96x140px - good visibility for field cards
+    hand: 'w-28 h-[160px]',          // 112x160px - slightly larger for player hand
+    'opponent-hand': 'w-16 h-[90px]', // 64x90px - smaller for opponent hand
   };
 
   if (faceDown) {
     return (
       <div
-        className={`${sizeClasses[size]} aspect-[2/3] bg-gradient-to-br from-purple-900 to-purple-700 border-2 border-purple-500 rounded-lg flex items-center justify-center`}
+        className={`${sizeClasses[size]} bg-gradient-to-br from-purple-900 to-purple-700 border-2 border-purple-500 rounded-lg flex items-center justify-center`}
       >
         <div className="text-4xl">🎴</div>
       </div>
@@ -97,7 +101,7 @@ export default function Card({ card, size = 'medium', faceDown = false, selected
 
   return (
     <div
-      className={`${sizeClasses[size]} aspect-[2/3] bg-gradient-to-b ${getCardColor()} border-2 ${
+      className={`${sizeClasses[size]} bg-gradient-to-b ${getCardColor()} border-2 ${
         selected ? 'border-yellow-400 shadow-lg shadow-yellow-400/50' : getRarityBorder()
       } ${getRarityGlow()} rounded-lg overflow-hidden shadow-xl hover:shadow-2xl transition-all`}
     >
@@ -138,7 +142,12 @@ export default function Card({ card, size = 'medium', faceDown = false, selected
         </div>
 
         <div className="text-[0.45rem] text-gray-100 flex-1 overflow-hidden">
-          {card.description?.substring(0, size === 'small' ? 30 : 60)}...
+          {card.description?.substring(0,
+            size === 'tiny' || size === 'opponent-hand' ? 15 :
+            size === 'small' ? 30 :
+            size === 'field' ? 45 :
+            60
+          )}...
         </div>
 
         {card.type === 'MONSTER' && (

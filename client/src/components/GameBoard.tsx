@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
 import Card from './Card';
+import HPBar from './HPBar';
 import { useAuth } from '../context/AuthContext';
 
 interface GameBoardProps {
@@ -268,8 +269,10 @@ export default function GameBoard({ mode }: GameBoardProps) {
 
   if (!gameState) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-lol-dark">
-        <div className="text-2xl text-lol-gold">Loading game...</div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+        <div className="flex items-center justify-center" style={{ width: '1400px', height: '900px' }}>
+          <div className="text-2xl text-lol-gold">Loading game...</div>
+        </div>
       </div>
     );
   }
@@ -279,249 +282,325 @@ export default function GameBoard({ mode }: GameBoardProps) {
   const isMyTurn = gameState.currentPlayer === playerIndex;
 
   return (
-    <div className="game-board min-h-screen p-4 relative">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <button
-          onClick={() => navigate('/')}
-          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg"
-        >
-          Exit Game
-        </button>
-        <div className="text-xl font-bold text-lol-gold">
-          Turn {gameState.turn} - {isMyTurn ? 'Your Turn' : "Opponent's Turn"}
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-lg">
-            Phase: <span className="text-lol-blue">{gameState.phase}</span>
-          </div>
-          {/* Rune Deck Button */}
-          {runeDeck.length > 0 && (
-            <button
-              onClick={() => setShowRunePanel(!showRunePanel)}
-              className={`px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 ${
-                showRunePanel
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-purple-500/20 text-purple-300 border border-purple-500/50 hover:bg-purple-500/30'
-              }`}
-            >
-              <span>&#9830;</span> Runes ({runeDeck.length - usedRunes.size}/{runeDeck.length})
-            </button>
-          )}
-        </div>
-      </div>
+    <div className="min-h-screen flex items-center justify-center bg-gray-950">
+      <div className="flex flex-col p-4 relative" style={{ width: '1400px', height: '900px' }}>
 
-      {/* Active Runes Display */}
-      {activeRunes.length > 0 && (
-        <div className="mb-4 flex gap-2 flex-wrap">
-          {activeRunes.map((ar, index) => (
-            <div
-              key={index}
-              className="bg-purple-500/20 border border-purple-500/50 rounded-lg px-3 py-2 flex items-center gap-2"
-            >
-              <div className={`w-2 h-2 rounded-full bg-gradient-to-r ${getPathColor(ar.rune.runePath)}`} />
-              <span className="text-purple-200 text-sm font-medium">{ar.rune.name}</span>
-              <span className="text-purple-400 text-xs">({ar.turnsRemaining} turns)</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Rune Panel Overlay */}
-      {showRunePanel && (
-        <div className="absolute top-20 right-4 z-50 w-80 bg-slate-900/95 border border-purple-500/50 rounded-xl shadow-2xl shadow-purple-500/20 overflow-hidden">
-          <div className="bg-gradient-to-r from-purple-600 to-purple-800 px-4 py-3">
-            <h3 className="text-white font-bold">Rune Deck</h3>
-            <p className="text-purple-200 text-xs">Activate once per duel</p>
-          </div>
-          <div className="p-3 space-y-2 max-h-[400px] overflow-auto">
-            {runeDeck.map((rune) => {
-              const isUsed = usedRunes.has(rune.cardId);
-              const isActive = activeRunes.some(ar => ar.rune.cardId === rune.cardId);
-              return (
-                <div
-                  key={rune.cardId}
-                  className={`rounded-lg p-3 border transition-all ${
-                    isUsed
-                      ? 'bg-slate-800/50 border-slate-700/50 opacity-50'
-                      : isActive
-                        ? 'bg-purple-500/20 border-purple-500/50'
-                        : 'bg-slate-800/80 border-slate-700/50 hover:border-purple-500/50 cursor-pointer'
-                  }`}
-                  onClick={() => !isUsed && isMyTurn && activateRune(rune)}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${getPathColor(rune.runePath)} flex items-center justify-center text-white flex-shrink-0`}>
-                      &#9830;
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <p className="text-white font-medium text-sm">{rune.name}</p>
-                        {isUsed && (
-                          <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-400">
-                            {isActive ? 'Active' : 'Used'}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-slate-400 text-xs mt-1">{rune.runePath}</p>
-                      <p className="text-purple-300 text-xs mt-1 line-clamp-2">{rune.runeEffect}</p>
-                    </div>
-                  </div>
-                  {!isUsed && isMyTurn && (
-                    <div className="mt-2 text-center">
-                      <span className="text-purple-400 text-xs">Click to activate ({RUNE_DURATION} turns)</span>
-                    </div>
-                  )}
-                  {!isMyTurn && !isUsed && (
-                    <div className="mt-2 text-center">
-                      <span className="text-slate-500 text-xs">Wait for your turn</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="bg-slate-800/50 px-4 py-2 border-t border-slate-700/50">
-            <button
-              onClick={() => setShowRunePanel(false)}
-              className="w-full text-center text-slate-400 text-sm hover:text-white transition-colors"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Opponent Field */}
-      <div className="mb-8 p-4 bg-gray-800 rounded-lg">
-        <div className="flex justify-between items-center mb-4">
-          <div className="text-lg font-bold">{opponent.name}</div>
-          <div className="text-xl text-red-400">LP: {opponent.lifePoints}</div>
-        </div>
-
-        {/* Opponent Items/Runes Zone */}
-        <div className="grid grid-cols-5 gap-2 mb-2">
-          {opponent.field.itemsAndRunes.map((slot, index) => (
-            <div
-              key={index}
-              className="aspect-[2/3] bg-gray-700 border-2 border-gray-600 rounded flex items-center justify-center"
-            >
-              {slot ? (
-                <Card card={slot.card} size="small" faceDown={!slot.faceUp} />
-              ) : (
-                <span className="text-gray-500 text-xs">I/R</span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Opponent Monster Zone */}
-        <div className="grid grid-cols-5 gap-2">
-          {opponent.field.monsters.map((slot, index) => (
-            <div
-              key={index}
-              className="aspect-[2/3] bg-gray-700 border-2 border-gray-600 rounded flex items-center justify-center"
-            >
-              {slot ? (
-                <Card card={slot.card} size="small" />
-              ) : (
-                <span className="text-gray-500 text-xs">Monster</span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-2 text-sm text-gray-400">
-          Hand: {opponent.hand.length} | Deck: {opponent.deck.length} | Graveyard:{' '}
-          {opponent.graveyard.length}
-        </div>
-      </div>
-
-      {/* Player Field */}
-      <div className="p-4 bg-gray-800 rounded-lg">
-        {/* Player Monster Zone */}
-        <div className="grid grid-cols-5 gap-2 mb-2">
-          {currentPlayer.field.monsters.map((slot, index) => (
-            <div
-              key={index}
-              onClick={() => handleFieldClick('monsters', index)}
-              className={`aspect-[2/3] bg-gray-700 border-2 rounded flex items-center justify-center cursor-pointer hover:border-lol-gold transition-colors ${
-                selectedCard !== null && currentPlayer.hand[selectedCard]?.type === 'MONSTER'
-                  ? 'border-green-500'
-                  : 'border-gray-600'
-              }`}
-            >
-              {slot ? (
-                <Card card={slot.card} size="small" />
-              ) : (
-                <span className="text-gray-500 text-xs">Monster</span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Player Items/Runes Zone */}
-        <div className="grid grid-cols-5 gap-2 mb-4">
-          {currentPlayer.field.itemsAndRunes.map((slot, index) => (
-            <div
-              key={index}
-              onClick={() => handleFieldClick('itemsAndRunes', index)}
-              className={`aspect-[2/3] bg-gray-700 border-2 rounded flex items-center justify-center cursor-pointer hover:border-lol-gold transition-colors ${
-                selectedCard !== null &&
-                (currentPlayer.hand[selectedCard]?.type === 'ITEM' ||
-                  currentPlayer.hand[selectedCard]?.type === 'RUNE' ||
-                  currentPlayer.hand[selectedCard]?.type === 'SUMMONER_SPELL')
-                  ? 'border-green-500'
-                  : 'border-gray-600'
-              }`}
-            >
-              {slot ? (
-                <Card card={slot.card} size="small" faceDown={!slot.faceUp} />
-              ) : (
-                <span className="text-gray-500 text-xs">I/R</span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="flex justify-between items-center mb-4">
-          <div className="text-lg font-bold">{currentPlayer.name}</div>
-          <div className="text-xl text-green-400">LP: {currentPlayer.lifePoints}</div>
-        </div>
-
-        {/* Player Hand */}
-        <div className="mb-4">
-          <div className="text-sm text-gray-400 mb-2">Your Hand:</div>
-          <div className="flex gap-2 overflow-x-auto pb-2">
-            {currentPlayer.hand.map((card, index) => (
-              <div
-                key={index}
-                onClick={() => handleCardClick(index)}
-                className={`cursor-pointer transition-transform ${
-                  selectedCard === index ? 'transform scale-110 -translate-y-2' : ''
-                }`}
-              >
-                <Card card={card} size="medium" selected={selectedCard === index} />
+        {/* OPPONENT HAND - At the very top */}
+        <div className="flex-shrink-0 flex justify-center py-1 mb-1">
+          <div className="flex gap-1">
+            {opponent.hand.map((card, index) => (
+              <div key={index} className="flex-shrink-0">
+                <Card card={card} size="opponent-hand" faceDown={true} />
               </div>
             ))}
           </div>
         </div>
 
-        {/* Controls */}
-        <div className="flex gap-4">
-          <button
-            onClick={handleEndTurn}
-            disabled={!isMyTurn}
-            className={`btn-primary flex-1 ${
-              !isMyTurn ? 'opacity-50 cursor-not-allowed' : ''
-            }`}
-          >
-            End Turn
-          </button>
-          <div className="text-sm text-gray-400 flex items-center">
-            Deck: {currentPlayer.deck.length} | Graveyard: {currentPlayer.graveyard.length}
+        {/* MAIN GAME AREA */}
+        <div className="flex-1 flex gap-3">
+
+          {/* LEFT SIDE - Enemy Info + Deck/GY */}
+          <div className="w-44 flex flex-col justify-start pt-2 gap-3 flex-shrink-0">
+            {/* Enemy Profile + HP - Simple row */}
+            <div className="flex items-center gap-3">
+              <div className="w-14 h-14 border-2 border-gray-400 bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center flex-shrink-0 shadow-lg">
+                <svg className="w-8 h-8 text-white/60" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-white text-xs font-bold truncate mb-1">{opponent.name}</div>
+                <HPBar current={opponent.lifePoints} max={8000} width="w-full" size="lg" />
+              </div>
+            </div>
+            {/* Enemy Graveyard */}
+            <div className="flex items-center gap-2">
+              <div className="w-12 h-16 bg-gradient-to-br from-gray-700 to-gray-900 rounded border border-gray-600 flex items-center justify-center text-xl flex-shrink-0">💀</div>
+              <div>
+                <div className="text-[10px] text-gray-500">Graveyard</div>
+                <div className="text-gray-300 font-bold">{opponent.graveyard.length}</div>
+              </div>
+            </div>
+            {/* Enemy Deck */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-shrink-0">
+                <div className="absolute top-0.5 left-0.5 w-12 h-16 bg-gradient-to-br from-red-900 to-red-950 rounded border border-red-800" />
+                <div className="relative w-12 h-16 bg-gradient-to-br from-red-700 to-red-800 rounded border border-red-600 flex items-center justify-center text-xl">🎴</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500">Deck</div>
+                <div className="text-white font-bold">{opponent.deck.length}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* CENTER - Boards */}
+          <div className="flex-1 flex flex-col gap-1 min-w-0">
+
+            {/* Opponent Field */}
+            <div className="flex-1 bg-gradient-to-b from-gray-800/50 to-gray-800/70 rounded-lg border border-gray-700/50 p-4 flex flex-col justify-center gap-3">
+              {/* Opponent Items/Runes */}
+              <div className="flex justify-center gap-3">
+                {opponent.field.itemsAndRunes.map((slot, index) => (
+                  <div
+                    key={index}
+                    className="w-20 h-24 bg-gray-700/40 border border-gray-600/50 rounded-lg flex items-center justify-center"
+                  >
+                    {slot ? (
+                      <Card card={slot.card} size="small" faceDown={!slot.faceUp} />
+                    ) : (
+                      <span className="text-gray-600 text-[10px]">I/R</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {/* Opponent Monsters */}
+              <div className="flex justify-center gap-3">
+                {opponent.field.monsters.map((slot, index) => (
+                  <div
+                    key={index}
+                    className="w-28 h-36 bg-gray-700/40 border border-gray-600/50 rounded-lg flex items-center justify-center"
+                  >
+                    {slot ? (
+                      <Card card={slot.card} size="field" />
+                    ) : (
+                      <span className="text-gray-600 text-[10px]">Monster</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Battle Line */}
+            <div className="flex-shrink-0 flex items-center gap-3 py-2">
+              <div className="flex-1 h-0.5 bg-gradient-to-r from-transparent via-yellow-500/60 to-transparent" />
+              <span className="text-yellow-500/80 text-xs font-bold tracking-widest px-2">⚔ BATTLE LINE ⚔</span>
+              <div className="flex-1 h-0.5 bg-gradient-to-r from-transparent via-yellow-500/60 to-transparent" />
+            </div>
+
+            {/* Player Field */}
+            <div className="flex-1 bg-gradient-to-t from-gray-800/50 to-gray-800/70 rounded-lg border border-blue-900/30 p-4 flex flex-col justify-center gap-3">
+              {/* Player Monsters */}
+              <div className="flex justify-center gap-3">
+                {currentPlayer.field.monsters.map((slot, index) => (
+                  <div
+                    key={index}
+                    onClick={() => handleFieldClick('monsters', index)}
+                    className={`w-28 h-36 bg-gray-700/40 border rounded-lg flex items-center justify-center cursor-pointer transition-all ${
+                      selectedCard !== null && currentPlayer.hand[selectedCard]?.type === 'MONSTER'
+                        ? 'border-green-500 shadow-lg shadow-green-500/30'
+                        : 'border-gray-600/50 hover:border-yellow-500/50'
+                    }`}
+                  >
+                    {slot ? (
+                      <Card card={slot.card} size="field" />
+                    ) : (
+                      <span className="text-gray-600 text-[10px]">Monster</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {/* Player Items/Runes */}
+              <div className="flex justify-center gap-3">
+                {currentPlayer.field.itemsAndRunes.map((slot, index) => (
+                  <div
+                    key={index}
+                    onClick={() => handleFieldClick('itemsAndRunes', index)}
+                    className={`w-20 h-24 bg-gray-700/40 border rounded-lg flex items-center justify-center cursor-pointer transition-all ${
+                      selectedCard !== null &&
+                      (currentPlayer.hand[selectedCard]?.type === 'ITEM' ||
+                        currentPlayer.hand[selectedCard]?.type === 'RUNE' ||
+                        currentPlayer.hand[selectedCard]?.type === 'SUMMONER_SPELL')
+                        ? 'border-green-500 shadow-lg shadow-green-500/30'
+                        : 'border-gray-600/50 hover:border-yellow-500/50'
+                    }`}
+                  >
+                    {slot ? (
+                      <Card card={slot.card} size="small" faceDown={!slot.faceUp} />
+                    ) : (
+                      <span className="text-gray-600 text-[10px]">I/R</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT SIDE - End Turn + Player Deck/GY */}
+          <div className="w-44 flex flex-col justify-between flex-shrink-0">
+            {/* Top spacer to align with opponent board */}
+            <div className="flex-1" />
+
+            {/* END TURN - Centered at battle line level */}
+            <div className="py-4">
+              <button
+                onClick={handleEndTurn}
+                disabled={!isMyTurn}
+                className={`w-full px-2 py-4 rounded-lg font-bold text-sm transition-all ${
+                  isMyTurn
+                    ? 'bg-gradient-to-b from-yellow-500 to-yellow-600 text-black hover:from-yellow-400 hover:to-yellow-500 shadow-lg shadow-yellow-500/40'
+                    : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                END<br/>TURN
+              </button>
+            </div>
+
+            {/* Bottom - Player Deck/GY + HP */}
+            <div className="flex-1 flex flex-col justify-end gap-3 pb-2">
+              {/* Player Graveyard */}
+              <div className="flex items-center gap-2">
+                <div className="w-12 h-16 bg-gradient-to-br from-gray-700 to-gray-900 rounded border border-gray-600 flex items-center justify-center text-xl flex-shrink-0">💀</div>
+                <div>
+                  <div className="text-[10px] text-gray-500">Graveyard</div>
+                  <div className="text-gray-300 font-bold">{currentPlayer.graveyard.length}</div>
+                </div>
+              </div>
+              {/* Player Deck */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-shrink-0">
+                  <div className="absolute top-0.5 left-0.5 w-12 h-16 bg-gradient-to-br from-blue-900 to-blue-950 rounded border border-blue-800" />
+                  <div className="relative w-12 h-16 bg-gradient-to-br from-blue-700 to-blue-800 rounded border border-blue-600 flex items-center justify-center text-xl">🎴</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-gray-500">Deck</div>
+                  <div className="text-white font-bold">{currentPlayer.deck.length}</div>
+                </div>
+              </div>
+              {/* Player Profile + HP - Simple row */}
+              <div className="flex items-center gap-3">
+                <div className="w-14 h-14 border-2 border-yellow-500 bg-gradient-to-br from-indigo-700 to-purple-800 flex items-center justify-center flex-shrink-0 shadow-lg shadow-yellow-500/30">
+                  <svg className="w-8 h-8 text-white/60" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-yellow-400 text-xs font-bold truncate mb-1">{currentPlayer.name}</div>
+                  <HPBar current={currentPlayer.lifePoints} max={8000} width="w-full" size="lg" />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* PLAYER HAND - At the bottom */}
+        <div className="flex-shrink-0 flex justify-center py-2 mt-1">
+          <div className="flex gap-2">
+            {currentPlayer.hand.map((card, index) => (
+              <div
+                key={index}
+                onClick={() => handleCardClick(index)}
+                className={`cursor-pointer transition-all flex-shrink-0 ${
+                  selectedCard === index
+                    ? 'transform scale-110 -translate-y-4 z-10'
+                    : 'hover:-translate-y-2'
+                }`}
+              >
+                <Card card={card} size="hand" selected={selectedCard === index} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* FOOTER - Turn info, Phase, Runes */}
+        <div className="flex-shrink-0 flex justify-center items-center gap-4 py-2 border-t border-gray-800/50 mt-1">
+          <button
+            onClick={() => navigate('/')}
+            className="px-3 py-1 bg-red-600/80 hover:bg-red-600 rounded text-xs transition-colors"
+          >
+            Exit
+          </button>
+          <div
+            className={`text-sm font-bold px-4 py-1.5 rounded ${
+              isMyTurn
+                ? 'bg-green-600/20 text-green-400 border border-green-500/50'
+                : 'bg-red-600/20 text-red-400 border border-red-500/50'
+            }`}
+          >
+            Turn {gameState.turn} - {isMyTurn ? 'Your Turn' : "Opponent's Turn"}
+          </div>
+          <div className="px-3 py-1.5 bg-blue-600/20 border border-blue-500/50 rounded">
+            <span className="text-blue-300 text-xs font-medium">{gameState.phase}</span>
+          </div>
+          {activeRunes.length > 0 && (
+            <div className="flex gap-1">
+              {activeRunes.map((ar, index) => (
+                <div
+                  key={index}
+                  className="bg-purple-500/20 border border-purple-500/50 rounded px-2 py-1 flex items-center gap-1"
+                >
+                  <div className={`w-2 h-2 rounded-full bg-gradient-to-r ${getPathColor(ar.rune.runePath)}`} />
+                  <span className="text-purple-200 text-xs">{ar.rune.name}</span>
+                  <span className="text-purple-400 text-[10px]">({ar.turnsRemaining})</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {runeDeck.length > 0 && (
+            <button
+              onClick={() => setShowRunePanel(!showRunePanel)}
+              className="px-3 py-1.5 rounded text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/50 hover:bg-purple-500/30 transition-all"
+            >
+              ◆ Runes ({runeDeck.length - usedRunes.size}/{runeDeck.length})
+            </button>
+          )}
+        </div>
+
+        {/* Rune Panel Overlay */}
+        {showRunePanel && (
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 w-80 bg-slate-900/98 border border-purple-500/50 rounded-lg shadow-2xl shadow-purple-500/30 overflow-hidden">
+            <div className="bg-gradient-to-r from-purple-600 to-purple-800 px-4 py-3">
+              <h3 className="text-white font-bold">Rune Deck</h3>
+              <p className="text-purple-200 text-xs">Activate once per duel</p>
+            </div>
+            <div className="p-3 space-y-2 max-h-[400px] overflow-auto">
+              {runeDeck.map((rune) => {
+                const isUsed = usedRunes.has(rune.cardId);
+                const isActive = activeRunes.some((ar) => ar.rune.cardId === rune.cardId);
+                return (
+                  <div
+                    key={rune.cardId}
+                    className={`rounded-lg p-3 border transition-all ${
+                      isUsed
+                        ? 'bg-slate-800/50 border-slate-700/50 opacity-50'
+                        : isActive
+                          ? 'bg-purple-500/20 border-purple-500/50'
+                          : 'bg-slate-800/80 border-slate-700/50 hover:border-purple-500/50 cursor-pointer'
+                    }`}
+                    onClick={() => !isUsed && isMyTurn && activateRune(rune)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`w-8 h-8 rounded-lg bg-gradient-to-br ${getPathColor(rune.runePath)} flex items-center justify-center text-white text-sm flex-shrink-0`}
+                      >
+                        ◆
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <p className="text-white font-medium text-sm">{rune.name}</p>
+                          {isUsed && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-400">
+                              {isActive ? 'Active' : 'Used'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-purple-300 text-xs mt-1 line-clamp-2">{rune.runeEffect}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="bg-slate-800/50 px-4 py-2 border-t border-slate-700/50">
+              <button
+                onClick={() => setShowRunePanel(false)}
+                className="w-full text-center text-slate-400 text-sm hover:text-white transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
