@@ -5,7 +5,7 @@ import MainMenu from './components/MainMenu';
 import GameBoard from './components/GameBoard';
 import Shop from './components/Shop';
 import Multiplayer from './components/Multiplayer';
-import Collection from './components/Collection';
+import CollectionWrapper from './components/CollectionWrapper';
 
 function AppContent() {
   const { user, loading } = useAuth();
@@ -30,7 +30,7 @@ function AppContent() {
         <Route path="/multiplayer" element={<Multiplayer />} />
         <Route path="/game/:roomId" element={<GameBoard mode="multiplayer" />} />
         <Route path="/shop" element={<Shop />} />
-        <Route path="/collection" element={<Collection />} />
+        <Route path="/collection" element={<CollectionWrapper />} />
       </Routes>
     </div>
   );

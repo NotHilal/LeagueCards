@@ -37,6 +37,16 @@ const userSchema = new mongoose.Schema({
   decks: [{
     name: String,
     cards: [String],
+    runes: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: function(v) {
+          return v.length <= 5;
+        },
+        message: 'Rune deck cannot have more than 5 runes'
+      }
+    },
     createdAt: {
       type: Date,
       default: Date.now

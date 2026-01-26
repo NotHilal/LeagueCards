@@ -11,53 +11,77 @@ async function migrateCards() {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log('✅ Connected to MongoDB\n');
 
-    // Clear existing cards and packs
-    await Card.deleteMany({});
-    await Pack.deleteMany({});
-    console.log('🗑️  Cleared existing cards and packs\n');
+    // Get counts before migration
+    const cardsBefore = await Card.countDocuments();
+    const packsBefore = await Pack.countDocuments();
 
-    // Migrate cards
-    console.log('📦 Migrating cards...');
-    const cardDocs = cards.map(card => ({
-      cardId: card.id,
-      name: card.name,
-      type: card.type,
-      monsterType: card.monsterType,
-      attribute: card.attribute,
-      level: card.level,
-      attack: card.attack,
-      defense: card.defense,
-      spellEffect: card.spellEffect,
-      trapEffect: card.trapEffect,
-      rarity: card.rarity,
-      effect: card.effect,
-      description: card.description,
-      image: card.image,
-      enabled: true
+    // Migrate cards using upsert (add new, update existing, keep others)
+    console.log('📦 Syncing cards...');
+    const cardOps = cards.map(card => ({
+      updateOne: {
+        filter: { cardId: card.id },
+        update: {
+          $set: {
+            cardId: card.id,
+            name: card.name,
+            type: card.type,
+            monsterType: card.monsterType,
+            region: card.region,
+            level: card.level,
+            attack: card.attack,
+            defense: card.defense,
+            itemEffect: card.itemEffect,
+            category: card.category,
+            runeEffect: card.runeEffect,
+            runePath: card.runePath,
+            summonerEffect: card.summonerEffect,
+            rarity: card.rarity,
+            effect: card.effect,
+            description: card.description,
+            image: card.image,
+            enabled: true
+          }
+        },
+        upsert: true
+      }
     }));
 
-    await Card.insertMany(cardDocs);
-    console.log(`✅ Migrated ${cardDocs.length} cards\n`);
+    const cardResult = await Card.bulkWrite(cardOps);
+    console.log(`✅ Cards: ${cardResult.upsertedCount} added, ${cardResult.modifiedCount} updated\n`);
 
-    // Migrate packs
-    console.log('📦 Migrating packs...');
-    const packDocs = packs.map(pack => ({
-      packId: pack.id,
-      name: pack.name,
-      description: pack.description,
-      price: pack.price,
-      cardCount: pack.cardCount,
-      image: pack.image,
-      rarityOdds: pack.rarityOdds,
-      guaranteedRarity: pack.guaranteedRarity || null,
-      enabled: true
+    // Migrate packs using upsert
+    console.log('📦 Syncing packs...');
+    const packOps = packs.map(pack => ({
+      updateOne: {
+        filter: { packId: pack.id },
+        update: {
+          $set: {
+            packId: pack.id,
+            name: pack.name,
+            description: pack.description,
+            price: pack.price,
+            cardCount: pack.cardCount,
+            image: pack.image,
+            rarityOdds: pack.rarityOdds,
+            guaranteedRarity: pack.guaranteedRarity || null,
+            enabled: true
+          }
+        },
+        upsert: true
+      }
     }));
 
-    await Pack.insertMany(packDocs);
-    console.log(`✅ Migrated ${packDocs.length} packs\n`);
+    const packResult = await Pack.bulkWrite(packOps);
+    console.log(`✅ Packs: ${packResult.upsertedCount} added, ${packResult.modifiedCount} updated\n`);
 
     // Display summary
+    const cardsAfter = await Card.countDocuments();
+    const packsAfter = await Pack.countDocuments();
+
     console.log('📊 Migration Summary:');
+    console.log(`\nCards: ${cardsBefore} → ${cardsAfter} (${cardsAfter - cardsBefore >= 0 ? '+' : ''}${cardsAfter - cardsBefore})`);
+    console.log(`Packs: ${packsBefore} → ${packsAfter} (${packsAfter - packsBefore >= 0 ? '+' : ''}${packsAfter - packsBefore})`);
+
     const cardsByRarity = await Card.aggregate([
       { $group: { _id: '$rarity', count: { $sum: 1 } } },
       { $sort: { _id: 1 } }

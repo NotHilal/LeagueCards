@@ -1,8 +1,9 @@
 // Card Types
 export enum CardType {
   MONSTER = 'MONSTER',
-  SPELL = 'SPELL',
-  TRAP = 'TRAP',
+  ITEM = 'ITEM',
+  RUNE = 'RUNE',
+  SUMMONER_SPELL = 'SUMMONER_SPELL',
 }
 
 export enum MonsterType {
@@ -12,13 +13,20 @@ export enum MonsterType {
   SYNCHRO = 'SYNCHRO',
 }
 
-export enum Attribute {
-  FIRE = 'FIRE',
-  WATER = 'WATER',
-  EARTH = 'EARTH',
-  WIND = 'WIND',
-  LIGHT = 'LIGHT',
-  DARK = 'DARK',
+export enum Region {
+  DEMACIA = 'DEMACIA',       // 14 - Justice & Light
+  NOXUS = 'NOXUS',           // 16 - Strength & Conquest
+  FRELJORD = 'FRELJORD',     // 14 - Ice & Survival
+  PILTOVER = 'PILTOVER',     // 20 - Technology (includes Zaun)
+  IONIA = 'IONIA',           // 18 - Spirit & Balance
+  BILGEWATER = 'BILGEWATER', // 11 - Pirates & Sea
+  SHADOW_ISLES = 'SHADOW_ISLES', // 12 - Undead & Death
+  SHURIMA = 'SHURIMA',       // 20 - Ancient (includes Targon)
+  THE_VOID = 'THE_VOID',     //  9 - Otherworldly
+  IXTAL = 'IXTAL',           //  7 - Elemental Jungle
+  DARKIN = 'DARKIN',         //  5 - Corrupted Ascended
+  YORDLE = 'YORDLE',         // 14 - Bandle City
+  RUNETERRA = 'RUNETERRA',   // 11 - Wanderers
 }
 
 export interface Card {
@@ -32,24 +40,31 @@ export interface Card {
 export interface MonsterCard extends Card {
   type: CardType.MONSTER;
   monsterType: MonsterType;
-  attribute: Attribute;
+  region: Region;
   level: number;
   attack: number;
   defense: number;
   effect?: string;
 }
 
-export interface SpellCard extends Card {
-  type: CardType.SPELL;
-  spellEffect: string;
+export interface ItemCard extends Card {
+  type: CardType.ITEM;
+  itemEffect: string;
+  category?: 'AD' | 'AP' | 'TANK' | 'SUPPORT' | 'BOOTS' | 'CONSUMABLE' | 'JUNGLE';
 }
 
-export interface TrapCard extends Card {
-  type: CardType.TRAP;
-  trapEffect: string;
+export interface RuneCard extends Card {
+  type: CardType.RUNE;
+  runeEffect: string;
+  runePath?: 'PRECISION' | 'DOMINATION' | 'SORCERY' | 'RESOLVE' | 'INSPIRATION';
 }
 
-export type GameCard = MonsterCard | SpellCard | TrapCard;
+export interface SummonerSpellCard extends Card {
+  type: CardType.SUMMONER_SPELL;
+  summonerEffect: string;
+}
+
+export type GameCard = MonsterCard | ItemCard | RuneCard | SummonerSpellCard;
 
 // Game State Types
 export enum GamePhase {
@@ -81,7 +96,7 @@ export interface PlayerState {
   hand: GameCard[];
   field: {
     monsters: (FieldCard | null)[];
-    spellTrap: (FieldCard | null)[];
+    itemsAndRunes: (FieldCard | null)[];
   };
   graveyard: GameCard[];
   banished: GameCard[];

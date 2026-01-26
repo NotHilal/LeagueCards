@@ -26,7 +26,20 @@
       "Bash(node:*)",
       "Bash(python:*)",
       "Bash(cmd /c taskkill /PID 5316 /F)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "WebSearch",
+      "WebFetch(domain:leagueoflegends.fandom.com)",
+      "WebFetch(domain:u.gg)",
+      "WebFetch(domain:www.leagueoflegends.com)",
+      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\hilal\\\\.claude\\\\projects\\\\C--Users-hilal-OneDrive-Desktop-Projects-Apps-cardgame\\\\792cb39a-336b-47b6-be79-b57660781d06.jsonl'' -Tail 100\")",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(test:*)",
+      "Bash(ren \"C:\\\\Users\\\\hilal\\\\OneDrive\\\\Desktop\\\\Projects\\\\Apps\\\\cardgame\\\\client\\\\src\\\\components\\\\Collection.tsx\" \"CardBinder.tsx\")",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite build:*)",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\hilal\\\\OneDrive\\\\Desktop\\\\Projects\\\\Apps\\\\cardgame\\\\client && npm run build\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\hilal\\\\OneDrive\\\\Desktop\\\\Projects\\\\Apps\\\\cardgame\\\\client && npx tsc --noEmit 2>&1\")"
     ]
   }
 }

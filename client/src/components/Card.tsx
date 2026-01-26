@@ -2,15 +2,18 @@ interface CardProps {
   card: {
     id: string;
     name: string;
-    type: 'MONSTER' | 'SPELL' | 'TRAP';
+    type: 'MONSTER' | 'ITEM' | 'RUNE' | 'SUMMONER_SPELL';
     attack?: number;
     defense?: number;
     level?: number;
     description: string;
-    attribute?: string;
+    region?: string;
     effect?: string;
-    spellEffect?: string;
-    trapEffect?: string;
+    itemEffect?: string;
+    runeEffect?: string;
+    summonerEffect?: string;
+    category?: string;
+    runePath?: string;
     rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
     image?: string;
   };
@@ -40,25 +43,34 @@ export default function Card({ card, size = 'medium', faceDown = false, selected
     switch (card.type) {
       case 'MONSTER':
         return 'from-orange-600 to-orange-800';
-      case 'SPELL':
+      case 'ITEM':
         return 'from-green-600 to-green-800';
-      case 'TRAP':
+      case 'RUNE':
         return 'from-purple-600 to-purple-800';
+      case 'SUMMONER_SPELL':
+        return 'from-blue-600 to-blue-800';
       default:
         return 'from-gray-600 to-gray-800';
     }
   };
 
-  const getAttributeIcon = () => {
+  const getRegionIcon = () => {
     const icons: Record<string, string> = {
-      FIRE: '🔥',
-      WATER: '💧',
-      EARTH: '🌍',
-      WIND: '💨',
-      LIGHT: '✨',
-      DARK: '🌙',
+      DEMACIA: '🛡️',
+      NOXUS: '⚔️',
+      FRELJORD: '❄️',
+      PILTOVER: '⚙️',
+      IONIA: '🌸',
+      BILGEWATER: '🏴‍☠️',
+      SHADOW_ISLES: '💀',
+      SHURIMA: '☀️',
+      THE_VOID: '🌀',
+      IXTAL: '🌿',
+      DARKIN: '😈',
+      YORDLE: '🐾',
+      RUNETERRA: '🌍',
     };
-    return card.attribute ? icons[card.attribute] || '⭐' : '⭐';
+    return card.region ? icons[card.region] || '⭐' : '⭐';
   };
 
   const getRarityBorder = () => {
@@ -98,7 +110,7 @@ export default function Card({ card, size = 'medium', faceDown = false, selected
       <div className="h-1/2 bg-gradient-to-b from-gray-800 to-gray-900 flex items-center justify-center text-4xl relative overflow-hidden">
         {card.image ? (
           <img
-            src={`http://localhost:3001${card.image}`}
+            src={card.image.startsWith('/') ? `http://localhost:3001${card.image}` : `http://localhost:3001/images/cards/${card.image}`}
             alt={card.name}
             className="w-full h-full object-cover"
             onError={(e) => {
@@ -114,7 +126,7 @@ export default function Card({ card, size = 'medium', faceDown = false, selected
           className="w-full h-full flex items-center justify-center text-4xl"
           style={{ display: card.image ? 'none' : 'flex' }}
         >
-          {card.type === 'MONSTER' ? getAttributeIcon() : card.type === 'SPELL' ? '📜' : '⚡'}
+          {card.type === 'MONSTER' ? getRegionIcon() : card.type === 'ITEM' ? '⚔️' : card.type === 'RUNE' ? '🔮' : '✨'}
         </div>
       </div>
 

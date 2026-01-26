@@ -15,7 +15,7 @@ const cardSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ['MONSTER', 'SPELL', 'TRAP']
+    enum: ['MONSTER', 'ITEM', 'RUNE', 'SUMMONER_SPELL']
   },
   // Monster-specific fields
   monsterType: {
@@ -23,9 +23,9 @@ const cardSchema = new mongoose.Schema({
     enum: ['NORMAL', 'EFFECT', 'FUSION', 'SYNCHRO', 'XYZ'],
     required: function() { return this.type === 'MONSTER'; }
   },
-  attribute: {
+  region: {
     type: String,
-    enum: ['LIGHT', 'DARK', 'FIRE', 'WATER', 'WIND', 'EARTH'],
+    enum: ['DEMACIA', 'NOXUS', 'FRELJORD', 'PILTOVER', 'IONIA', 'BILGEWATER', 'SHADOW_ISLES', 'SHURIMA', 'THE_VOID', 'IXTAL', 'DARKIN', 'YORDLE', 'RUNETERRA'],
     required: function() { return this.type === 'MONSTER'; }
   },
   level: {
@@ -44,15 +44,28 @@ const cardSchema = new mongoose.Schema({
     min: 0,
     required: function() { return this.type === 'MONSTER'; }
   },
-  // Spell-specific fields
-  spellEffect: {
+  // Item-specific fields
+  itemEffect: {
     type: String,
-    required: function() { return this.type === 'SPELL'; }
+    required: function() { return this.type === 'ITEM'; }
   },
-  // Trap-specific fields
-  trapEffect: {
+  category: {
     type: String,
-    required: function() { return this.type === 'TRAP'; }
+    enum: ['AD', 'AP', 'TANK', 'SUPPORT', 'BOOTS', 'CONSUMABLE', 'JUNGLE']
+  },
+  // Rune-specific fields
+  runeEffect: {
+    type: String,
+    required: function() { return this.type === 'RUNE'; }
+  },
+  runePath: {
+    type: String,
+    enum: ['PRECISION', 'DOMINATION', 'SORCERY', 'RESOLVE', 'INSPIRATION']
+  },
+  // Summoner Spell-specific fields
+  summonerEffect: {
+    type: String,
+    required: function() { return this.type === 'SUMMONER_SPELL'; }
   },
   // Common fields
   rarity: {

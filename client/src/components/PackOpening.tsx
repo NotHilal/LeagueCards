@@ -222,7 +222,7 @@ export default function PackOpening({ cards, pack, onClose }: PackOpeningProps) 
               } flex items-center justify-center text-2xl`}
             >
               {index <= currentCardIndex ? (
-                <span>{card.type === 'MONSTER' ? '⭐' : card.type === 'SPELL' ? '📜' : '⚡'}</span>
+                <span>{card.type === 'MONSTER' ? '⭐' : card.type === 'ITEM' ? '⚔️' : card.type === 'RUNE' ? '🔮' : '✨'}</span>
               ) : (
                 '?'
               )}

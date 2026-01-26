@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
 import Card from './Card';
+import { useAuth } from '../context/AuthContext';
 
 interface GameBoardProps {
   mode: 'solo' | 'multiplayer';
@@ -10,12 +11,14 @@ interface GameBoardProps {
 interface GameCard {
   id: string;
   name: string;
-  type: 'MONSTER' | 'SPELL' | 'TRAP';
+  type: 'MONSTER' | 'ITEM' | 'RUNE' | 'SUMMONER_SPELL';
   attack?: number;
   defense?: number;
   level?: number;
   description: string;
   image?: string;
+  runeEffect?: string;
+  runePath?: string;
 }
 
 interface PlayerState {
@@ -26,7 +29,7 @@ interface PlayerState {
   hand: GameCard[];
   field: {
     monsters: (any | null)[];
-    spellTrap: (any | null)[];
+    itemsAndRunes: (any | null)[];
   };
   graveyard: GameCard[];
 }
@@ -38,13 +41,69 @@ interface GameState {
   turn: number;
 }
 
+interface RuneCard {
+  cardId: string;
+  id: string;
+  name: string;
+  runeEffect?: string;
+  runePath?: string;
+  rarity?: string;
+}
+
+interface ActiveRune {
+  rune: RuneCard;
+  turnsRemaining: number;
+}
+
+const RUNE_DURATION = 3; // Default duration in turns
+
 export default function GameBoard({ mode }: GameBoardProps) {
   const navigate = useNavigate();
   const { roomId } = useParams();
+  const { token } = useAuth();
   const [socket, setSocket] = useState<Socket | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
   const [playerIndex, setPlayerIndex] = useState<0 | 1>(0);
+
+  // Rune Deck state
+  const [runeDeck, setRuneDeck] = useState<RuneCard[]>([]);
+  const [usedRunes, setUsedRunes] = useState<Set<string>>(new Set());
+  const [activeRunes, setActiveRunes] = useState<ActiveRune[]>([]);
+  const [showRunePanel, setShowRunePanel] = useState(false);
+
+  // Fetch rune deck from selected deck
+  // TODO: Pass deckId as prop when deck selection is implemented
+  const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchDeckRunes = async () => {
+      if (!selectedDeckId) {
+        // No deck selected yet - runes will be empty
+        // In the future, implement deck selection before starting a game
+        return;
+      }
+
+      try {
+        const res = await fetch(`http://localhost:3001/api/user/decks/${selectedDeckId}/full`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const runes = (data.runes || []).map((r: any) => ({
+            ...r,
+            id: r.cardId || r.id
+          }));
+          setRuneDeck(runes);
+        }
+      } catch (err) {
+        console.error('Failed to fetch deck runes:', err);
+      }
+    };
+    if (token && selectedDeckId) {
+      fetchDeckRunes();
+    }
+  }, [token, selectedDeckId]);
 
   useEffect(() => {
     const newSocket = io('http://localhost:3001');
@@ -72,11 +131,46 @@ export default function GameBoard({ mode }: GameBoardProps) {
     };
   }, [mode, roomId]);
 
+  // Activate a rune
+  const activateRune = (rune: RuneCard) => {
+    if (usedRunes.has(rune.cardId)) return;
+    if (!gameState || gameState.currentPlayer !== playerIndex) return;
+
+    // Mark rune as used
+    setUsedRunes(prev => new Set([...prev, rune.cardId]));
+
+    // Add to active runes
+    setActiveRunes(prev => [...prev, { rune, turnsRemaining: RUNE_DURATION }]);
+
+    // Close panel after activation
+    setShowRunePanel(false);
+  };
+
+  // Decrement rune durations (called at end of player's turn)
+  const decrementRuneDurations = () => {
+    setActiveRunes(prev =>
+      prev
+        .map(ar => ({ ...ar, turnsRemaining: ar.turnsRemaining - 1 }))
+        .filter(ar => ar.turnsRemaining > 0)
+    );
+  };
+
+  const getPathColor = (path?: string) => {
+    const colors: Record<string, string> = {
+      PRECISION: 'from-yellow-400 to-yellow-600',
+      DOMINATION: 'from-red-400 to-red-600',
+      SORCERY: 'from-blue-400 to-blue-600',
+      RESOLVE: 'from-green-400 to-green-600',
+      INSPIRATION: 'from-purple-400 to-purple-600',
+    };
+    return colors[path || ''] || 'from-purple-400 to-purple-600';
+  };
+
   const handleCardClick = (index: number) => {
     setSelectedCard(index);
   };
 
-  const handleFieldClick = (zone: 'monsters' | 'spellTrap', index: number) => {
+  const handleFieldClick = (zone: 'monsters' | 'itemsAndRunes', index: number) => {
     if (selectedCard === null || !gameState) return;
 
     const currentPlayerState = gameState.players[playerIndex];
@@ -90,8 +184,8 @@ export default function GameBoard({ mode }: GameBoardProps) {
       currentPlayerState.hand.splice(selectedCard, 1);
       setSelectedCard(null);
       setGameState({ ...gameState });
-    } else if (zone === 'spellTrap' && (card.type === 'SPELL' || card.type === 'TRAP')) {
-      currentPlayerState.field.spellTrap[index] = { card, faceUp: card.type === 'SPELL' };
+    } else if (zone === 'itemsAndRunes' && (card.type === 'ITEM' || card.type === 'RUNE' || card.type === 'SUMMONER_SPELL')) {
+      currentPlayerState.field.itemsAndRunes[index] = { card, faceUp: card.type !== 'RUNE' };
       currentPlayerState.hand.splice(selectedCard, 1);
       setSelectedCard(null);
       setGameState({ ...gameState });
@@ -100,6 +194,9 @@ export default function GameBoard({ mode }: GameBoardProps) {
 
   const handleEndTurn = () => {
     if (!socket || !gameState) return;
+
+    // Decrement active rune durations when player ends their turn
+    decrementRuneDurations();
 
     if (mode === 'multiplayer' && roomId) {
       socket.emit('end_turn', roomId);
@@ -170,7 +267,7 @@ export default function GameBoard({ mode }: GameBoardProps) {
   const isMyTurn = gameState.currentPlayer === playerIndex;
 
   return (
-    <div className="game-board min-h-screen p-4">
+    <div className="game-board min-h-screen p-4 relative">
       {/* Header */}
       <div className="flex justify-between items-center mb-4">
         <button
@@ -182,10 +279,106 @@ export default function GameBoard({ mode }: GameBoardProps) {
         <div className="text-xl font-bold text-lol-gold">
           Turn {gameState.turn} - {isMyTurn ? 'Your Turn' : "Opponent's Turn"}
         </div>
-        <div className="text-lg">
-          Phase: <span className="text-lol-blue">{gameState.phase}</span>
+        <div className="flex items-center gap-4">
+          <div className="text-lg">
+            Phase: <span className="text-lol-blue">{gameState.phase}</span>
+          </div>
+          {/* Rune Deck Button */}
+          {runeDeck.length > 0 && (
+            <button
+              onClick={() => setShowRunePanel(!showRunePanel)}
+              className={`px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 ${
+                showRunePanel
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-purple-500/20 text-purple-300 border border-purple-500/50 hover:bg-purple-500/30'
+              }`}
+            >
+              <span>&#9830;</span> Runes ({runeDeck.length - usedRunes.size}/{runeDeck.length})
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Active Runes Display */}
+      {activeRunes.length > 0 && (
+        <div className="mb-4 flex gap-2 flex-wrap">
+          {activeRunes.map((ar, index) => (
+            <div
+              key={index}
+              className="bg-purple-500/20 border border-purple-500/50 rounded-lg px-3 py-2 flex items-center gap-2"
+            >
+              <div className={`w-2 h-2 rounded-full bg-gradient-to-r ${getPathColor(ar.rune.runePath)}`} />
+              <span className="text-purple-200 text-sm font-medium">{ar.rune.name}</span>
+              <span className="text-purple-400 text-xs">({ar.turnsRemaining} turns)</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Rune Panel Overlay */}
+      {showRunePanel && (
+        <div className="absolute top-20 right-4 z-50 w-80 bg-slate-900/95 border border-purple-500/50 rounded-xl shadow-2xl shadow-purple-500/20 overflow-hidden">
+          <div className="bg-gradient-to-r from-purple-600 to-purple-800 px-4 py-3">
+            <h3 className="text-white font-bold">Rune Deck</h3>
+            <p className="text-purple-200 text-xs">Activate once per duel</p>
+          </div>
+          <div className="p-3 space-y-2 max-h-[400px] overflow-auto">
+            {runeDeck.map((rune) => {
+              const isUsed = usedRunes.has(rune.cardId);
+              const isActive = activeRunes.some(ar => ar.rune.cardId === rune.cardId);
+              return (
+                <div
+                  key={rune.cardId}
+                  className={`rounded-lg p-3 border transition-all ${
+                    isUsed
+                      ? 'bg-slate-800/50 border-slate-700/50 opacity-50'
+                      : isActive
+                        ? 'bg-purple-500/20 border-purple-500/50'
+                        : 'bg-slate-800/80 border-slate-700/50 hover:border-purple-500/50 cursor-pointer'
+                  }`}
+                  onClick={() => !isUsed && isMyTurn && activateRune(rune)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${getPathColor(rune.runePath)} flex items-center justify-center text-white flex-shrink-0`}>
+                      &#9830;
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <p className="text-white font-medium text-sm">{rune.name}</p>
+                        {isUsed && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-400">
+                            {isActive ? 'Active' : 'Used'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-400 text-xs mt-1">{rune.runePath}</p>
+                      <p className="text-purple-300 text-xs mt-1 line-clamp-2">{rune.runeEffect}</p>
+                    </div>
+                  </div>
+                  {!isUsed && isMyTurn && (
+                    <div className="mt-2 text-center">
+                      <span className="text-purple-400 text-xs">Click to activate ({RUNE_DURATION} turns)</span>
+                    </div>
+                  )}
+                  {!isMyTurn && !isUsed && (
+                    <div className="mt-2 text-center">
+                      <span className="text-slate-500 text-xs">Wait for your turn</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="bg-slate-800/50 px-4 py-2 border-t border-slate-700/50">
+            <button
+              onClick={() => setShowRunePanel(false)}
+              className="w-full text-center text-slate-400 text-sm hover:text-white transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Opponent Field */}
       <div className="mb-8 p-4 bg-gray-800 rounded-lg">
@@ -194,9 +387,9 @@ export default function GameBoard({ mode }: GameBoardProps) {
           <div className="text-xl text-red-400">LP: {opponent.lifePoints}</div>
         </div>
 
-        {/* Opponent Spell/Trap Zone */}
+        {/* Opponent Items/Runes Zone */}
         <div className="grid grid-cols-5 gap-2 mb-2">
-          {opponent.field.spellTrap.map((slot, index) => (
+          {opponent.field.itemsAndRunes.map((slot, index) => (
             <div
               key={index}
               className="aspect-[2/3] bg-gray-700 border-2 border-gray-600 rounded flex items-center justify-center"
@@ -204,7 +397,7 @@ export default function GameBoard({ mode }: GameBoardProps) {
               {slot ? (
                 <Card card={slot.card} size="small" faceDown={!slot.faceUp} />
               ) : (
-                <span className="text-gray-500 text-xs">S/T</span>
+                <span className="text-gray-500 text-xs">I/R</span>
               )}
             </div>
           ))}
@@ -255,16 +448,17 @@ export default function GameBoard({ mode }: GameBoardProps) {
           ))}
         </div>
 
-        {/* Player Spell/Trap Zone */}
+        {/* Player Items/Runes Zone */}
         <div className="grid grid-cols-5 gap-2 mb-4">
-          {currentPlayer.field.spellTrap.map((slot, index) => (
+          {currentPlayer.field.itemsAndRunes.map((slot, index) => (
             <div
               key={index}
-              onClick={() => handleFieldClick('spellTrap', index)}
+              onClick={() => handleFieldClick('itemsAndRunes', index)}
               className={`aspect-[2/3] bg-gray-700 border-2 rounded flex items-center justify-center cursor-pointer hover:border-lol-gold transition-colors ${
                 selectedCard !== null &&
-                (currentPlayer.hand[selectedCard]?.type === 'SPELL' ||
-                  currentPlayer.hand[selectedCard]?.type === 'TRAP')
+                (currentPlayer.hand[selectedCard]?.type === 'ITEM' ||
+                  currentPlayer.hand[selectedCard]?.type === 'RUNE' ||
+                  currentPlayer.hand[selectedCard]?.type === 'SUMMONER_SPELL')
                   ? 'border-green-500'
                   : 'border-gray-600'
               }`}
@@ -272,7 +466,7 @@ export default function GameBoard({ mode }: GameBoardProps) {
               {slot ? (
                 <Card card={slot.card} size="small" faceDown={!slot.faceUp} />
               ) : (
-                <span className="text-gray-500 text-xs">S/T</span>
+                <span className="text-gray-500 text-xs">I/R</span>
               )}
             </div>
           ))}

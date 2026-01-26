@@ -290,6 +290,141 @@ app.get('/api/user/gold', protect, (req, res) => {
   res.json({ gold: req.user.gold });
 });
 
+// Protected: Get user's decks
+app.get('/api/user/decks', protect, (req, res) => {
+  try {
+    const decks = req.user.decks || [];
+    res.json(decks);
+  } catch (error) {
+    console.error('Get decks error:', error);
+    res.status(500).json({ error: 'Failed to fetch decks' });
+  }
+});
+
+// Protected: Create a new deck
+app.post('/api/user/decks', protect, async (req, res) => {
+  try {
+    const { name, cards, runes } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Deck name is required' });
+    }
+
+    // Validate runes if provided
+    if (runes && runes.length > 5) {
+      return res.status(400).json({ error: 'Deck cannot have more than 5 runes' });
+    }
+
+    const newDeck = {
+      name: name.trim(),
+      cards: cards || [],
+      runes: runes || [],
+      createdAt: new Date()
+    };
+
+    req.user.decks.push(newDeck);
+    await req.user.save();
+
+    // Return the created deck with its _id
+    const createdDeck = req.user.decks[req.user.decks.length - 1];
+    res.status(201).json(createdDeck);
+  } catch (error) {
+    console.error('Create deck error:', error);
+    res.status(500).json({ error: 'Failed to create deck' });
+  }
+});
+
+// Protected: Update a deck
+app.put('/api/user/decks/:deckId', protect, async (req, res) => {
+  try {
+    const { deckId } = req.params;
+    const { name, cards, runes } = req.body;
+
+    const deck = req.user.decks.id(deckId);
+    if (!deck) {
+      return res.status(404).json({ error: 'Deck not found' });
+    }
+
+    if (name !== undefined) {
+      if (!name.trim()) {
+        return res.status(400).json({ error: 'Deck name cannot be empty' });
+      }
+      deck.name = name.trim();
+    }
+
+    if (cards !== undefined) {
+      deck.cards = cards;
+    }
+
+    if (runes !== undefined) {
+      if (runes.length > 5) {
+        return res.status(400).json({ error: 'Deck cannot have more than 5 runes' });
+      }
+      deck.runes = runes;
+    }
+
+    await req.user.save();
+    res.json(deck);
+  } catch (error) {
+    console.error('Update deck error:', error);
+    res.status(500).json({ error: 'Failed to update deck' });
+  }
+});
+
+// Protected: Delete a deck
+app.delete('/api/user/decks/:deckId', protect, async (req, res) => {
+  try {
+    const { deckId } = req.params;
+
+    const deck = req.user.decks.id(deckId);
+    if (!deck) {
+      return res.status(404).json({ error: 'Deck not found' });
+    }
+
+    req.user.decks.pull(deckId);
+    await req.user.save();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete deck error:', error);
+    res.status(500).json({ error: 'Failed to delete deck' });
+  }
+});
+
+// Protected: Get a specific deck with full card and rune details
+app.get('/api/user/decks/:deckId/full', protect, async (req, res) => {
+  try {
+    const { deckId } = req.params;
+    const deck = req.user.decks.id(deckId);
+
+    if (!deck) {
+      return res.status(404).json({ error: 'Deck not found' });
+    }
+
+    // Get full card details
+    const cardIds = deck.cards || [];
+    const runeIds = deck.runes || [];
+
+    const [cards, runes] = await Promise.all([
+      cardIds.length > 0 ? Card.find({ cardId: { $in: cardIds } }) : [],
+      runeIds.length > 0 ? Card.find({ cardId: { $in: runeIds }, type: 'RUNE' }) : []
+    ]);
+
+    res.json({
+      _id: deck._id,
+      name: deck.name,
+      cardIds: cardIds,
+      cards: cards,
+      runeIds: runeIds,
+      runes: runes,
+      createdAt: deck.createdAt
+    });
+  } catch (error) {
+    console.error('Get full deck error:', error);
+    res.status(500).json({ error: 'Failed to fetch deck details' });
+  }
+});
+
 app.get('/api/starter-deck', (req, res) => {
   res.json(getStarterDeck());
 });
