@@ -162,6 +162,12 @@ export default function GameBoard({ mode }: GameBoardProps) {
   } | null>(null);
   const dragImageRef = useRef<HTMLDivElement | null>(null);
 
+  // Pending item equip state (for showing champion selection popup)
+  const [pendingItemEquip, setPendingItemEquip] = useState<{
+    cardIndex: number;
+    card: GameCard;
+  } | null>(null);
+
   // Rune Deck state (kept for backwards compatibility)
   const [runeDeck, setRuneDeck] = useState<RuneCard[]>([]);
   const [usedRunes, setUsedRunes] = useState<Set<string>>(new Set());
@@ -294,11 +300,17 @@ export default function GameBoard({ mode }: GameBoardProps) {
     return colors[path || ''] || 'from-purple-400 to-purple-600';
   };
 
-  const handleCardClick = (index: number) => {
+  const handleCardClick = (e: React.MouseEvent, index: number) => {
+    e.stopPropagation(); // Prevent closing preview
     if (!gameState) return;
 
     const currentPlayerState = gameState.players[playerIndex];
     const card = currentPlayerState.hand[index];
+
+    // Show card preview
+    if (card) {
+      setPreviewCard(card);
+    }
 
     if (gameMode === 'equip' && card?.type === 'ITEM') {
       setSelectedItemIndex(index);
@@ -356,14 +368,54 @@ export default function GameBoard({ mode }: GameBoardProps) {
       setDraggedCardType(null);
       return;
     }
-    // Item/Rune to spell zone - place immediately
-    else if (zone === 'spellZone' && (card.type === 'ITEM' || card.type === 'RUNE')) {
+    // Item to spell zone - show equip popup if there are champions
+    else if (zone === 'spellZone' && card.type === 'ITEM') {
+      const hasChampions = currentPlayerState.field.champions.some(c => c !== null);
+
+      if (hasChampions) {
+        // Show popup to choose champion
+        setPendingItemEquip({
+          cardIndex: draggedCardIndex,
+          card: card,
+        });
+        setDraggedCardIndex(null);
+        setDraggedCardType(null);
+        return;
+      } else {
+        // General item - apply effect to all champions or place in spell zone
+        if (currentPlayerState.field.spellZone[index] !== null) return;
+
+        const fieldCard: FieldCard = {
+          card,
+          position: 'DEFENSE',
+          faceUp: true,
+          turnsOnBoard: 0,
+          hasAttacked: false,
+          hasChangedPosition: false,
+          currentAttack: 0,
+          currentDefense: 0,
+          equippedItems: [],
+          isInvincible: false,
+          attackModifier: 0,
+          defenseModifier: 0,
+          hasUsedSpell: false,
+          hasUsedUltimate: false,
+        };
+
+        currentPlayerState.field.spellZone[index] = fieldCard;
+        currentPlayerState.hand.splice(draggedCardIndex, 1);
+        setSelectedCard(null);
+        setGameState({ ...gameState });
+      }
+    }
+    // Rune to spell zone
+    else if (zone === 'spellZone' && card.type === 'RUNE') {
       if (currentPlayerState.field.spellZone[index] !== null) return;
 
       const fieldCard: FieldCard = {
         card,
         position: 'DEFENSE',
-        faceUp: card.type !== 'RUNE',
+        faceUp: false,
         turnsOnBoard: 0,
         hasAttacked: false,
         hasChangedPosition: false,
@@ -430,8 +482,88 @@ export default function GameBoard({ mode }: GameBoardProps) {
     setPendingMonsterDrop(null);
   };
 
+  // Equip item to a specific champion
+  const equipItemToChampion = (championIndex: number) => {
+    if (!pendingItemEquip || !gameState) return;
+
+    const currentPlayerState = gameState.players[playerIndex];
+    const card = currentPlayerState.hand[pendingItemEquip.cardIndex];
+
+    if (!card) {
+      setPendingItemEquip(null);
+      return;
+    }
+
+    const champion = currentPlayerState.field.champions[championIndex];
+    if (!champion) {
+      setPendingItemEquip(null);
+      return;
+    }
+
+    // Check if player has enough gold
+    const goldCost = card.goldCost || 0;
+    if (currentPlayerState.gold < goldCost) {
+      alert('Not enough gold!');
+      setPendingItemEquip(null);
+      return;
+    }
+
+    // Deduct gold
+    currentPlayerState.gold -= goldCost;
+
+    // Add item to champion's equipped items
+    if (!champion.equippedItems) {
+      champion.equippedItems = [];
+    }
+    champion.equippedItems.push({
+      id: card.id,
+      name: card.name,
+      atkBonus: card.atkBonus,
+      defBonus: card.defBonus,
+      goldCost: card.goldCost,
+    });
+
+    // Apply stat bonuses
+    champion.currentAttack += card.atkBonus || 0;
+    champion.currentDefense += card.defBonus || 0;
+
+    // Place item in spell zone
+    const emptySpellSlot = currentPlayerState.field.spellZone.findIndex(slot => slot === null);
+    if (emptySpellSlot !== -1) {
+      const fieldCard: FieldCard = {
+        card,
+        position: 'DEFENSE',
+        faceUp: true,
+        turnsOnBoard: 0,
+        hasAttacked: false,
+        hasChangedPosition: false,
+        currentAttack: 0,
+        currentDefense: 0,
+        equippedItems: [],
+        isInvincible: false,
+        attackModifier: 0,
+        defenseModifier: 0,
+        hasUsedSpell: false,
+        hasUsedUltimate: false,
+      };
+      currentPlayerState.field.spellZone[emptySpellSlot] = fieldCard;
+    }
+
+    // Remove item from hand
+    currentPlayerState.hand.splice(pendingItemEquip.cardIndex, 1);
+
+    setPendingItemEquip(null);
+    setSelectedCard(null);
+    setGameState({ ...gameState });
+  };
+
+  const cancelItemEquip = () => {
+    setPendingItemEquip(null);
+  };
+
   // Preview field card - can always see your own cards, only face-up for opponent
-  const handleFieldCardClick = (fieldCard: FieldCard | null, isOpponent: boolean) => {
+  const handleFieldCardClick = (e: React.MouseEvent, fieldCard: FieldCard | null, isOpponent: boolean) => {
+    e.stopPropagation(); // Prevent closing preview when clicking cards
     if (fieldCard) {
       // Can see own cards (even face-down) or opponent's face-up cards
       if (!isOpponent || fieldCard.faceUp) {
@@ -495,6 +627,21 @@ export default function GameBoard({ mode }: GameBoardProps) {
       setSummonMode('attack'); // Reset to attack mode after summoning
       setGameState({ ...gameState });
     } else if (zone === 'spellZone' && (card.type === 'ITEM' || card.type === 'RUNE' || card.type === 'SUMMONER_SPELL')) {
+      // For items, show champion selection popup if there are champions
+      if (card.type === 'ITEM') {
+        const hasChampions = currentPlayerState.field.champions.some(c => c !== null);
+
+        if (hasChampions) {
+          // Show popup to choose champion (treat all items as equipable for now)
+          setPendingItemEquip({
+            cardIndex: selectedCard,
+            card: card,
+          });
+          return;
+        }
+      }
+
+      // Non-equipable items, runes, or summoner spells go to spell zone
       if (currentPlayerState.field.spellZone[index] !== null) return;
 
       const fieldCard: FieldCard = {
@@ -880,7 +1027,10 @@ export default function GameBoard({ mode }: GameBoardProps) {
   const selectedCardIsMonster = selectedCard !== null && currentPlayerState.hand[selectedCard]?.type === 'MONSTER';
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950 overflow-hidden">
+    <div
+      className="min-h-screen flex items-center justify-center bg-gray-950 overflow-hidden"
+      onClick={() => setPreviewCard(null)}
+    >
       <div className="flex flex-col p-2 relative" style={{ width: '100vw', maxWidth: '1450px', height: '100vh', maxHeight: '900px' }}>
 
         {/* TOP BAR - Exit, Gold, Synergies */}
@@ -917,17 +1067,102 @@ export default function GameBoard({ mode }: GameBoardProps) {
           </div>
         )}
 
-        {/* Card Preview Panel - Above Equip Item button */}
+        {/* Card Preview Panel */}
         {previewCard && (
-          <div className="fixed bottom-[550px] right-[250px] z-40 flex flex-col items-end gap-2">
-            <button
-              onClick={() => setPreviewCard(null)}
-              className="bg-red-500/80 hover:bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg font-bold shadow-lg"
-            >
-              ×
-            </button>
-            <div className="transform scale-[2] origin-bottom-right">
-              <Card card={previewCard} size="hand" />
+          <div className="fixed top-[80px] right-[250px] z-40 pointer-events-none">
+            {/* Custom large readable card */}
+            <div className="relative pointer-events-auto">
+              {/* Outer glow */}
+              <div className={`absolute -inset-1 rounded-2xl blur-md opacity-60 ${
+                previewCard.type === 'MONSTER' ? 'bg-orange-500' :
+                previewCard.type === 'ITEM' ? 'bg-green-500' :
+                previewCard.type === 'RUNE' ? 'bg-purple-500' : 'bg-blue-500'
+              }`} />
+
+              <div className={`relative w-[200px] h-[310px] rounded-xl overflow-hidden shadow-2xl border-2 flex flex-col ${
+                previewCard.type === 'MONSTER' ? 'border-orange-400/80' :
+                previewCard.type === 'ITEM' ? 'border-green-400/80' :
+                previewCard.type === 'RUNE' ? 'border-purple-400/80' : 'border-blue-400/80'
+              } bg-gradient-to-b from-slate-800 to-slate-950`}>
+
+                {/* Header */}
+                <div className={`px-2 py-1.5 ${
+                  previewCard.type === 'MONSTER' ? 'bg-gradient-to-r from-orange-600/90 to-orange-800/90' :
+                  previewCard.type === 'ITEM' ? 'bg-gradient-to-r from-green-600/90 to-green-800/90' :
+                  previewCard.type === 'RUNE' ? 'bg-gradient-to-r from-purple-600/90 to-purple-800/90' : 'bg-gradient-to-r from-blue-600/90 to-blue-800/90'
+                }`}>
+                  <h3 className="text-white font-bold text-sm drop-shadow-lg truncate">{previewCard.name}</h3>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className="text-white/80 text-[10px] font-medium">{previewCard.type}</span>
+                    {previewCard.region && (
+                      <span className="text-yellow-300 text-[10px] font-medium">• {previewCard.region}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Image Area */}
+                <div className="h-[145px] bg-gradient-to-b from-gray-800 to-gray-900 flex items-center justify-center relative">
+                  {previewCard.image ? (
+                    <img
+                      src={previewCard.image.startsWith('/') ? `http://localhost:3001${previewCard.image}` : `http://localhost:3001/images/cards/${previewCard.image}`}
+                      alt={previewCard.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-4xl drop-shadow-lg">
+                      {previewCard.type === 'MONSTER' ? '⚔️' : previewCard.type === 'ITEM' ? '🛡️' : previewCard.type === 'RUNE' ? '🔮' : '✨'}
+                    </span>
+                  )}
+                  {/* Gradient overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+                </div>
+
+                {/* Stats for Monsters */}
+                {(previewCard.type === 'MONSTER' || previewCard.type === 'JUNGLE_MONSTER') && (
+                  <div className="flex justify-center gap-2 px-2 py-1.5 bg-black/60">
+                    <div className="flex items-center gap-1 bg-gradient-to-r from-orange-600 to-orange-700 px-2 py-1 rounded-md shadow-lg">
+                      <span className="text-sm">⚔️</span>
+                      <span className="text-white font-bold text-sm">{previewCard.attack}</span>
+                    </div>
+                    <div className="flex items-center gap-1 bg-gradient-to-r from-blue-600 to-blue-700 px-2 py-1 rounded-md shadow-lg">
+                      <span className="text-sm">🛡️</span>
+                      <span className="text-white font-bold text-sm">{previewCard.defense}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Item stats */}
+                {previewCard.type === 'ITEM' && (previewCard.atkBonus || previewCard.defBonus || previewCard.goldCost) && (
+                  <div className="flex justify-center gap-1 px-2 py-1.5 bg-black/60">
+                    {previewCard.goldCost && (
+                      <div className="flex items-center bg-yellow-600/80 px-1.5 py-0.5 rounded-md">
+                        <span className="text-yellow-200 font-bold text-xs">{previewCard.goldCost}g</span>
+                      </div>
+                    )}
+                    {previewCard.atkBonus && (
+                      <div className="flex items-center bg-orange-600/80 px-1.5 py-0.5 rounded-md">
+                        <span className="text-white font-bold text-xs">+{previewCard.atkBonus}</span>
+                      </div>
+                    )}
+                    {previewCard.defBonus && (
+                      <div className="flex items-center bg-blue-600/80 px-1.5 py-0.5 rounded-md">
+                        <span className="text-white font-bold text-xs">+{previewCard.defBonus}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Description */}
+                <div className="p-2 bg-slate-900/95 flex-1 overflow-auto">
+                  <p className="text-gray-200 text-xs leading-relaxed">{previewCard.description}</p>
+                  {previewCard.itemEffect && (
+                    <p className="text-green-400 text-xs mt-1 italic border-t border-green-500/30 pt-1">{previewCard.itemEffect}</p>
+                  )}
+                  {previewCard.runeEffect && (
+                    <p className="text-purple-400 text-xs mt-1 italic border-t border-purple-500/30 pt-1">{previewCard.runeEffect}</p>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -961,6 +1196,110 @@ export default function GameBoard({ mode }: GameBoardProps) {
               <button
                 onClick={cancelMonsterPlacement}
                 className="mt-4 text-gray-400 hover:text-white text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Pending Item Equip - Champion Selection */}
+        {pendingItemEquip && gameState && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-slate-900 border-2 border-green-500 rounded-lg p-6 text-center max-w-lg">
+              <h3 className="text-xl font-bold text-green-400 mb-2">Equip Item</h3>
+              <p className="text-gray-300 text-sm mb-2">
+                {pendingItemEquip.card.name}
+              </p>
+              <div className="flex justify-center gap-2 mb-3">
+                {pendingItemEquip.card.goldCost && (
+                  <span className="text-yellow-400 text-sm bg-yellow-500/20 px-2 py-1 rounded">
+                    {pendingItemEquip.card.goldCost}g
+                  </span>
+                )}
+                {pendingItemEquip.card.atkBonus && (
+                  <span className="text-orange-400 text-sm bg-orange-500/20 px-2 py-1 rounded">
+                    +{pendingItemEquip.card.atkBonus} ATK
+                  </span>
+                )}
+                {pendingItemEquip.card.defBonus && (
+                  <span className="text-blue-400 text-sm bg-blue-500/20 px-2 py-1 rounded">
+                    +{pendingItemEquip.card.defBonus} DEF
+                  </span>
+                )}
+              </div>
+              {/* Item Effect */}
+              {(pendingItemEquip.card.itemEffect || pendingItemEquip.card.description) && (
+                <div className="bg-slate-800/80 rounded-lg px-3 py-2 mb-4 border border-green-500/30">
+                  <p className="text-green-300 text-xs italic">
+                    {pendingItemEquip.card.itemEffect || pendingItemEquip.card.description}
+                  </p>
+                </div>
+              )}
+              <p className="text-gray-400 text-xs mb-4">Select a champion to equip:</p>
+              <div className="flex flex-wrap gap-3 justify-center mb-4">
+                {currentPlayerState.field.champions.map((champion, index) => {
+                  if (!champion) return null;
+                  const goldCost = pendingItemEquip.card.goldCost || 0;
+                  const canAfford = currentPlayerState.gold >= goldCost;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => equipItemToChampion(index)}
+                      disabled={!canAfford}
+                      className={`p-2 rounded-lg border-2 transition-all flex flex-col items-center gap-1 w-[100px] ${
+                        canAfford
+                          ? 'bg-slate-800 border-green-500/50 hover:border-green-500 hover:bg-slate-700 cursor-pointer'
+                          : 'bg-slate-800/50 border-gray-600 opacity-50 cursor-not-allowed'
+                      }`}
+                    >
+                      {/* Champion Image */}
+                      <div className="w-14 h-14 rounded-lg overflow-hidden bg-gray-700 flex items-center justify-center">
+                        {champion.card.image ? (
+                          <img
+                            src={champion.card.image.startsWith('/') ? `http://localhost:3001${champion.card.image}` : `http://localhost:3001/images/cards/${champion.card.image}`}
+                            alt={champion.card.name}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              if (e.currentTarget.nextSibling) {
+                                (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex';
+                              }
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className="w-full h-full flex items-center justify-center text-2xl"
+                          style={{ display: champion.card.image ? 'none' : 'flex' }}
+                        >
+                          ⚔️
+                        </div>
+                      </div>
+                      <span className="text-white text-xs font-medium truncate max-w-[90px]">
+                        {champion.card.name}
+                      </span>
+                      <div className="flex gap-1 text-[10px]">
+                        <span className="text-orange-400">{champion.currentAttack}</span>
+                        <span className="text-gray-500">/</span>
+                        <span className="text-blue-400">{champion.currentDefense}</span>
+                      </div>
+                      {champion.equippedItems && champion.equippedItems.length > 0 && (
+                        <span className="text-green-400 text-[10px]">
+                          {champion.equippedItems.length} item(s)
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {currentPlayerState.gold < (pendingItemEquip.card.goldCost || 0) && (
+                <p className="text-red-400 text-xs mb-2">
+                  Not enough gold! Need {pendingItemEquip.card.goldCost}g, have {currentPlayerState.gold}g
+                </p>
+              )}
+              <button
+                onClick={cancelItemEquip}
+                className="text-gray-400 hover:text-white text-sm"
               >
                 Cancel
               </button>
@@ -1103,7 +1442,7 @@ export default function GameBoard({ mode }: GameBoardProps) {
                   {opponent.field.spellZone.map((slot, index) => (
                     <div
                       key={index}
-                      onClick={() => slot && handleFieldCardClick(slot, true)}
+                      onClick={(e) => slot && handleFieldCardClick(e, slot, true)}
                       className={`bg-gray-700/30 border border-gray-600/40 rounded flex items-center justify-center ${slot ? 'cursor-pointer hover:border-gray-500' : ''}`}
                       style={{ width: '88px', height: '104px' }}
                     >
@@ -1122,8 +1461,8 @@ export default function GameBoard({ mode }: GameBoardProps) {
                   {opponent.field.champions.map((slot, index) => (
                     <div
                       key={index}
-                      onClick={() => {
-                        if (slot) handleFieldCardClick(slot, true);
+                      onClick={(e) => {
+                        if (slot) handleFieldCardClick(e, slot, true);
                         handleChampionClick(index, true);
                       }}
                       className={`bg-gray-700/30 border rounded flex items-center justify-center transition-all cursor-pointer ${
@@ -1233,13 +1572,13 @@ export default function GameBoard({ mode }: GameBoardProps) {
                     return (
                       <div
                         key={index}
-                        onClick={() => {
+                        onClick={(e) => {
                           if (selectedCard !== null && currentPlayerState.hand[selectedCard]?.type === 'MONSTER') {
                             handleFieldClick('champions', index);
                           } else if (gameMode === 'equip' && selectedItemIndex !== null) {
                             handleFieldClick('champions', index);
                           } else if (slot) {
-                            handleFieldCardClick(slot, false);
+                            handleFieldCardClick(e, slot, false);
                             handleChampionClick(index, false);
                           }
                         }}
@@ -1293,9 +1632,9 @@ export default function GameBoard({ mode }: GameBoardProps) {
                   {currentPlayerState.field.spellZone.map((slot, index) => (
                     <div
                       key={index}
-                      onClick={() => {
+                      onClick={(e) => {
                         if (slot) {
-                          handleFieldCardClick(slot, false);
+                          handleFieldCardClick(e, slot, false);
                         } else {
                           handleFieldClick('spellZone', index);
                         }
@@ -1334,19 +1673,6 @@ export default function GameBoard({ mode }: GameBoardProps) {
 
             {/* Action buttons */}
             <div className="py-2 space-y-2">
-              {isMyTurn && gameState.phase === 'MAIN1' && (
-                <button
-                  onClick={() => setGameMode(gameMode === 'equip' ? 'normal' : 'equip')}
-                  className={`w-full px-2 py-2 rounded font-bold text-xs transition-all ${
-                    gameMode === 'equip'
-                      ? 'bg-green-600 text-white'
-                      : 'bg-green-600/50 text-green-200 hover:bg-green-600/70'
-                  }`}
-                >
-                  Equip Item
-                </button>
-              )}
-
               <button
                 onClick={handleEndTurn}
                 disabled={!isMyTurn}
@@ -1463,7 +1789,7 @@ export default function GameBoard({ mode }: GameBoardProps) {
                       </button>
                     </div>
                   )}
-                  <div className="card-drag-handle" onClick={() => handleCardClick(index)}>
+                  <div className="card-drag-handle" onClick={(e) => handleCardClick(e, index)}>
                     <Card card={card} size="hand" selected={isSelected} />
                   </div>
                 </div>
