@@ -24,13 +24,13 @@ interface CardProps {
 
 export default function Card({ card, size = 'medium', faceDown = false, selected = false }: CardProps) {
   const sizeClasses = {
-    tiny: 'w-14 h-[54px]',
-    small: 'w-20 h-[90px]',
-    medium: 'w-32 h-[162px]',
+    tiny: 'w-12 h-[50px]',
+    small: 'w-[72px] h-[90px]',        // For item/rune zones (fits 88x104 zones)
+    medium: 'w-[104px] h-[145px]',
     large: 'w-48 h-[258px]',
-    field: 'w-24 h-[140px]',        // 96x140px - good visibility for field cards
-    hand: 'w-28 h-[160px]',          // 112x160px - slightly larger for player hand
-    'opponent-hand': 'w-16 h-[90px]', // 64x90px - smaller for opponent hand
+    field: 'w-[105px] h-[150px]',      // Fits 120x165 monster zones
+    hand: 'w-[105px] h-[140px]',       // Player hand cards - bigger
+    'opponent-hand': 'w-12 h-[65px]',  // Smaller for opponent hand
   };
 
   if (faceDown) {
