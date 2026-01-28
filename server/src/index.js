@@ -15,6 +15,12 @@ import Card from './models/Card.js';
 import Pack from './models/Pack.js';
 import { getStarterDeck } from './cards.js';
 
+// Game systems
+import combatSystem from './game/combatSystem.js';
+import economySystem from './game/economySystem.js';
+import regionSynergy from './game/regionSynergy.js';
+import summonerSpells from './game/summonerSpells.js';
+
 // Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -429,6 +435,26 @@ app.get('/api/starter-deck', (req, res) => {
   res.json(getStarterDeck());
 });
 
+// Helper function to create a field card with all combat properties
+function createFieldCard(card, position = 'ATTACK', faceUp = true) {
+  return {
+    card,
+    position,
+    faceUp,
+    turnsOnBoard: 0,
+    hasAttacked: false,
+    hasChangedPosition: false,
+    currentAttack: card.attack || 0,
+    currentDefense: card.defense || 0,
+    equippedItems: [],
+    isInvincible: false,
+    attackModifier: 0,
+    defenseModifier: 0,
+    hasUsedSpell: false,
+    hasUsedUltimate: false,
+  };
+}
+
 // Helper function to create initial player state
 function createPlayerState(playerId, playerName) {
   const deck = getStarterDeck();
@@ -441,27 +467,224 @@ function createPlayerState(playerId, playerName) {
     deck: deck,
     hand: hand,
     field: {
-      monsters: [null, null, null, null, null],
-      itemsAndRunes: [null, null, null, null, null]
+      champions: [null, null, null, null, null],    // Renamed from monsters
+      spellZone: [null, null, null, null, null],    // Renamed from itemsAndRunes
+      jungleMonster: null,                           // New jungle zone
     },
     graveyard: [],
-    banished: []
+    banished: [],
+    // Gold economy
+    gold: economySystem.STARTING_GOLD,
+    // Summoner spells
+    spellDeck: summonerSpells.initializeSpellDeck(),
+    usedSummonerSpells: [],
+    // Region synergies
+    regionCounts: {},
+    regionBonuses: [],
+    // Special trackers
+    hasUsedRevive: false,
+    hasGottenNoxusKillGold: false,
   };
 }
 
 // Helper function to create initial game state
 function createGameState(roomId, player1, player2) {
-  return {
+  const state = {
     id: roomId,
     players: [
       createPlayerState(player1.id, player1.name),
       createPlayerState(player2.id, player2.name)
     ],
     currentPlayer: 0,
-    phase: 'DRAW',
+    phase: 'MAIN1', // Start in MAIN1 (skipping DRAW/STANDBY for first turn)
     turn: 1,
     winner: null
   };
+
+  // Initialize region synergies for both players
+  regionSynergy.updateRegionSynergies(state.players[0]);
+  regionSynergy.updateRegionSynergies(state.players[1]);
+
+  return state;
+}
+
+// Handle summon action
+function handleSummon(gameState, playerIndex, data) {
+  if (gameState.currentPlayer !== playerIndex) {
+    return { success: false, error: 'Not your turn' };
+  }
+
+  if (gameState.phase !== 'MAIN1' && gameState.phase !== 'MAIN2') {
+    return { success: false, error: 'Can only summon during Main Phase' };
+  }
+
+  const player = gameState.players[playerIndex];
+  const { cardIndex, zoneIndex } = data;
+
+  const card = player.hand[cardIndex];
+  if (!card) {
+    return { success: false, error: 'Invalid card index' };
+  }
+
+  if (card.type !== 'MONSTER') {
+    return { success: false, error: 'Can only summon monsters to champion zone' };
+  }
+
+  if (player.field.champions[zoneIndex] !== null) {
+    return { success: false, error: 'Zone is occupied' };
+  }
+
+  // Remove from hand and add to field
+  player.hand.splice(cardIndex, 1);
+  player.field.champions[zoneIndex] = createFieldCard(card, 'ATTACK', true);
+
+  // Update region synergies
+  regionSynergy.updateRegionSynergies(player);
+
+  return { success: true };
+}
+
+// Handle set card (face-down defense)
+function handleSetCard(gameState, playerIndex, data) {
+  if (gameState.currentPlayer !== playerIndex) {
+    return { success: false, error: 'Not your turn' };
+  }
+
+  if (gameState.phase !== 'MAIN1' && gameState.phase !== 'MAIN2') {
+    return { success: false, error: 'Can only set cards during Main Phase' };
+  }
+
+  const player = gameState.players[playerIndex];
+  const { cardIndex, zoneIndex } = data;
+
+  const card = player.hand[cardIndex];
+  if (!card) {
+    return { success: false, error: 'Invalid card index' };
+  }
+
+  if (card.type === 'MONSTER') {
+    if (player.field.champions[zoneIndex] !== null) {
+      return { success: false, error: 'Zone is occupied' };
+    }
+
+    player.hand.splice(cardIndex, 1);
+    player.field.champions[zoneIndex] = createFieldCard(card, 'FACE_DOWN_DEFENSE', false);
+
+    regionSynergy.updateRegionSynergies(player);
+  } else {
+    // Items, runes, spells go to spell zone
+    if (player.field.spellZone[zoneIndex] !== null) {
+      return { success: false, error: 'Zone is occupied' };
+    }
+
+    player.hand.splice(cardIndex, 1);
+    player.field.spellZone[zoneIndex] = createFieldCard(card, 'DEFENSE', false);
+  }
+
+  return { success: true };
+}
+
+// Handle change position
+function handleChangePosition(gameState, playerIndex, data) {
+  if (gameState.currentPlayer !== playerIndex) {
+    return { success: false, error: 'Not your turn' };
+  }
+
+  if (gameState.phase !== 'MAIN1' && gameState.phase !== 'MAIN2') {
+    return { success: false, error: 'Can only change position during Main Phase' };
+  }
+
+  const player = gameState.players[playerIndex];
+  const { cardFieldIndex, newPosition } = data;
+
+  const fieldCard = player.field.champions[cardFieldIndex];
+  if (!fieldCard) {
+    return { success: false, error: 'No card at specified position' };
+  }
+
+  if (fieldCard.hasChangedPosition) {
+    return { success: false, error: 'Position already changed this turn' };
+  }
+
+  // Cards summoned this turn cannot change position
+  if (fieldCard.turnsOnBoard === 0) {
+    return { success: false, error: 'Cannot change position the turn a card was summoned' };
+  }
+
+  fieldCard.position = newPosition;
+  fieldCard.hasChangedPosition = true;
+
+  // Flip face-up if changing from face-down
+  if (!fieldCard.faceUp) {
+    fieldCard.faceUp = true;
+  }
+
+  return { success: true };
+}
+
+// Handle end phase
+function handleEndPhase(gameState, playerIndex) {
+  if (gameState.currentPlayer !== playerIndex) {
+    return { success: false, error: 'Not your turn' };
+  }
+
+  const phaseOrder = ['DRAW', 'STANDBY', 'MAIN1', 'BATTLE', 'MAIN2', 'END'];
+  const currentIndex = phaseOrder.indexOf(gameState.phase);
+
+  if (currentIndex < phaseOrder.length - 1) {
+    gameState.phase = phaseOrder[currentIndex + 1];
+    return { success: true };
+  }
+
+  return { success: false, error: 'Already at END phase' };
+}
+
+// Handle use ability
+function handleUseAbility(gameState, playerIndex, championIndex, abilityType, targetIndex) {
+  if (gameState.currentPlayer !== playerIndex) {
+    return { success: false, error: 'Not your turn' };
+  }
+
+  const player = gameState.players[playerIndex];
+  const fieldCard = player.field.champions[championIndex];
+
+  if (!fieldCard) {
+    return { success: false, error: 'No champion at specified position' };
+  }
+
+  const champion = fieldCard.card;
+  if (!champion.abilities) {
+    return { success: false, error: 'Champion has no abilities' };
+  }
+
+  if (abilityType === 'spell') {
+    if (fieldCard.hasUsedSpell) {
+      return { success: false, error: 'Spell already used this turn' };
+    }
+    if (!champion.abilities.spell) {
+      return { success: false, error: 'Champion has no spell ability' };
+    }
+    fieldCard.hasUsedSpell = true;
+    // TODO: Implement specific spell effects based on champion.abilities.spell.effect
+    return { success: true };
+  }
+
+  if (abilityType === 'ultimate') {
+    if (fieldCard.hasUsedUltimate) {
+      return { success: false, error: 'Ultimate already used' };
+    }
+    if (fieldCard.turnsOnBoard < 5) {
+      return { success: false, error: 'Ultimate not unlocked (need 5 turns on board)' };
+    }
+    if (!champion.abilities.ultimate) {
+      return { success: false, error: 'Champion has no ultimate ability' };
+    }
+    fieldCard.hasUsedUltimate = true;
+    // TODO: Implement specific ultimate effects based on champion.abilities.ultimate.effect
+    return { success: true };
+  }
+
+  return { success: false, error: 'Unknown ability type' };
 }
 
 // Socket.IO event handlers
@@ -532,11 +755,148 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
 
-    // Process game action (simplified for now)
-    console.log('Game action:', action);
+    const gameState = room.gameState;
+    const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
+    if (playerIndex === -1) return;
 
-    // Broadcast updated game state
-    io.to(roomId).emit('game_update', room.gameState);
+    let result = { success: false, error: 'Unknown action' };
+
+    switch (action.type) {
+      case 'SUMMON':
+        result = handleSummon(gameState, playerIndex, action.data);
+        break;
+      case 'SET_CARD':
+        result = handleSetCard(gameState, playerIndex, action.data);
+        break;
+      case 'CHANGE_POSITION':
+        result = handleChangePosition(gameState, playerIndex, action.data);
+        break;
+      case 'END_PHASE':
+        result = handleEndPhase(gameState, playerIndex);
+        break;
+      default:
+        console.log('Unhandled game action:', action.type);
+    }
+
+    if (result.success) {
+      io.to(roomId).emit('game_update', gameState);
+    } else {
+      socket.emit('action_error', { error: result.error });
+    }
+  });
+
+  // Declare attack
+  socket.on('declare_attack', ({ roomId, attackerIndex, targetIndex }) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+
+    const gameState = room.gameState;
+    const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
+    if (playerIndex === -1) return;
+
+    const result = combatSystem.processAttack(gameState, playerIndex, attackerIndex, targetIndex);
+
+    if (result.success) {
+      // Apply kill reward if defender was destroyed
+      if (result.combatResult.defenderDestroyed) {
+        const player = gameState.players[playerIndex];
+        const hasNoxusBonus = regionSynergy.hasNoxusKillBonus(player);
+        economySystem.applyKillReward(player, hasNoxusBonus);
+
+        // Apply Shadow Isles death damage if defender's owner has it
+        const defenderIndex = playerIndex === 0 ? 1 : 0;
+        const defender = gameState.players[defenderIndex];
+        regionSynergy.applyShadowIslesDeathDamage(defender, player);
+      }
+
+      // Check for attacker destroyed (defender gets kill reward)
+      if (result.combatResult.attackerDestroyed) {
+        const defenderIndex = playerIndex === 0 ? 1 : 0;
+        const defender = gameState.players[defenderIndex];
+        const hasNoxusBonus = regionSynergy.hasNoxusKillBonus(defender);
+        economySystem.applyKillReward(defender, hasNoxusBonus);
+
+        // Shadow Isles death damage
+        const attacker = gameState.players[playerIndex];
+        regionSynergy.applyShadowIslesDeathDamage(attacker, defender);
+      }
+
+      // Update region synergies after combat
+      regionSynergy.updateRegionSynergies(gameState.players[0]);
+      regionSynergy.updateRegionSynergies(gameState.players[1]);
+
+      io.to(roomId).emit('game_update', gameState);
+      io.to(roomId).emit('combat_result', result.combatResult);
+    } else {
+      socket.emit('action_error', { error: result.error });
+    }
+  });
+
+  // Equip item
+  socket.on('equip_item', ({ roomId, itemIndex, championIndex }) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+
+    const gameState = room.gameState;
+    const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
+    if (playerIndex === -1) return;
+
+    // Check phase
+    if (!economySystem.canEquipInPhase(gameState.phase)) {
+      socket.emit('action_error', { error: 'Can only equip items during Main Phase' });
+      return;
+    }
+
+    const result = economySystem.equipItem(gameState, playerIndex, itemIndex, championIndex);
+
+    if (result.success) {
+      // Update region synergies
+      regionSynergy.updateRegionSynergies(gameState.players[playerIndex]);
+      io.to(roomId).emit('game_update', gameState);
+      socket.emit('item_equipped', { goldSpent: result.goldSpent });
+    } else {
+      socket.emit('action_error', { error: result.error });
+    }
+  });
+
+  // Use summoner spell
+  socket.on('use_summoner_spell', ({ roomId, spellType, data }) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+
+    const gameState = room.gameState;
+    const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
+    if (playerIndex === -1) return;
+
+    const result = summonerSpells.useSummonerSpell(gameState, playerIndex, spellType, data);
+
+    if (result.success) {
+      // Update region synergies if field changed
+      regionSynergy.updateRegionSynergies(gameState.players[playerIndex]);
+      io.to(roomId).emit('game_update', gameState);
+      io.to(roomId).emit('spell_used', { spellType: result.spellUsed, playerIndex });
+    } else {
+      socket.emit('action_error', { error: result.error });
+    }
+  });
+
+  // Use champion ability
+  socket.on('use_ability', ({ roomId, championIndex, abilityType, targetIndex }) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+
+    const gameState = room.gameState;
+    const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
+    if (playerIndex === -1) return;
+
+    const result = handleUseAbility(gameState, playerIndex, championIndex, abilityType, targetIndex);
+
+    if (result.success) {
+      io.to(roomId).emit('game_update', gameState);
+      io.to(roomId).emit('ability_used', { championIndex, abilityType });
+    } else {
+      socket.emit('action_error', { error: result.error });
+    }
   });
 
   // End turn
@@ -545,18 +905,34 @@ io.on('connection', (socket) => {
     if (!room || !room.gameState) return;
 
     const gameState = room.gameState;
+    const previousPlayer = gameState.currentPlayer;
+
+    // Reset combat flags for the ending player
+    combatSystem.resetTurnCombatFlags(gameState.players[previousPlayer]);
 
     // Switch player
     gameState.currentPlayer = gameState.currentPlayer === 0 ? 1 : 0;
 
-    // Draw a card for new player
+    // Process new turn for the new current player
     const currentPlayerState = gameState.players[gameState.currentPlayer];
+
+    // DRAW phase - Draw a card
     if (currentPlayerState.deck.length > 0) {
       const drawnCard = currentPlayerState.deck.shift();
       currentPlayerState.hand.push(drawnCard);
     }
 
-    // Reset phase
+    // STANDBY phase effects
+    // 1. Increment turnsOnBoard for all champions
+    combatSystem.incrementTurnsOnBoard(currentPlayerState);
+
+    // 2. Apply turn income (+100 gold)
+    economySystem.applyTurnIncome(currentPlayerState);
+
+    // 3. Update region synergies
+    regionSynergy.updateRegionSynergies(currentPlayerState);
+
+    // Reset phase to DRAW (will auto-advance through phases)
     gameState.phase = 'DRAW';
     if (gameState.currentPlayer === 0) {
       gameState.turn++;
@@ -567,6 +943,36 @@ io.on('connection', (socket) => {
       currentPlayer: gameState.currentPlayer,
       turn: gameState.turn
     });
+  });
+
+  // Change phase
+  socket.on('change_phase', (roomId) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+
+    const gameState = room.gameState;
+    const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
+
+    // Only current player can change phase
+    if (playerIndex !== gameState.currentPlayer) {
+      socket.emit('action_error', { error: 'Not your turn' });
+      return;
+    }
+
+    const phaseOrder = ['DRAW', 'STANDBY', 'MAIN1', 'BATTLE', 'MAIN2', 'END'];
+    const currentIndex = phaseOrder.indexOf(gameState.phase);
+
+    if (currentIndex < phaseOrder.length - 1) {
+      gameState.phase = phaseOrder[currentIndex + 1];
+
+      // Auto-advance through DRAW and STANDBY
+      if (gameState.phase === 'STANDBY') {
+        gameState.phase = 'MAIN1';
+      }
+
+      io.to(roomId).emit('game_update', gameState);
+      io.to(roomId).emit('phase_changed', { phase: gameState.phase });
+    }
   });
 
   // Start solo game vs AI

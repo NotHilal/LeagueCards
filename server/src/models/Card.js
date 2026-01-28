@@ -1,5 +1,12 @@
 import mongoose from 'mongoose';
 
+// Champion ability sub-schema
+const abilitySchema = new mongoose.Schema({
+  name: { type: String },
+  description: { type: String },
+  effect: { type: String }, // Effect identifier for game logic
+}, { _id: false });
+
 const cardSchema = new mongoose.Schema({
   cardId: {
     type: String,
@@ -15,7 +22,7 @@ const cardSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ['MONSTER', 'ITEM', 'RUNE', 'SUMMONER_SPELL']
+    enum: ['MONSTER', 'ITEM', 'RUNE', 'SUMMONER_SPELL', 'JUNGLE_MONSTER']
   },
   // Monster-specific fields
   monsterType: {
@@ -37,12 +44,18 @@ const cardSchema = new mongoose.Schema({
   attack: {
     type: Number,
     min: 0,
-    required: function() { return this.type === 'MONSTER'; }
+    required: function() { return this.type === 'MONSTER' || this.type === 'JUNGLE_MONSTER'; }
   },
   defense: {
     type: Number,
     min: 0,
-    required: function() { return this.type === 'MONSTER'; }
+    required: function() { return this.type === 'MONSTER' || this.type === 'JUNGLE_MONSTER'; }
+  },
+  // Champion abilities (passive, spell, ultimate)
+  abilities: {
+    passive: abilitySchema,
+    spell: abilitySchema,
+    ultimate: abilitySchema,
   },
   // Item-specific fields
   itemEffect: {
@@ -52,6 +65,25 @@ const cardSchema = new mongoose.Schema({
   category: {
     type: String,
     enum: ['AD', 'AP', 'TANK', 'SUPPORT', 'BOOTS', 'CONSUMABLE', 'JUNGLE']
+  },
+  // Item gold cost and stat bonuses
+  goldCost: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  atkBonus: {
+    type: Number,
+    default: 0
+  },
+  defBonus: {
+    type: Number,
+    default: 0
+  },
+  // Jungle monster fields
+  teamEffect: {
+    type: String,
+    required: function() { return this.type === 'JUNGLE_MONSTER'; }
   },
   // Rune-specific fields
   runeEffect: {
