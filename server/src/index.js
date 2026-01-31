@@ -20,6 +20,7 @@ import combatSystem from './game/combatSystem.js';
 import economySystem from './game/economySystem.js';
 import regionSynergy from './game/regionSynergy.js';
 import summonerSpells from './game/summonerSpells.js';
+import effectSystem from './game/effectSystem.js';
 
 // Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -491,6 +492,7 @@ function createPlayerState(playerId, playerName) {
 function createGameState(roomId, player1, player2) {
   const state = {
     id: roomId,
+    gameId: roomId, // For effect system tracking
     players: [
       createPlayerState(player1.id, player1.name),
       createPlayerState(player2.id, player2.name)
@@ -498,8 +500,12 @@ function createGameState(roomId, player1, player2) {
     currentPlayer: 0,
     phase: 'MAIN1', // Start in MAIN1 (skipping DRAW/STANDBY for first turn)
     turn: 1,
-    winner: null
+    winner: null,
+    effectMessages: [], // Track effect messages for UI
   };
+
+  // Initialize effect system for this game
+  effectSystem.initializeEffectState(roomId);
 
   // Initialize region synergies for both players
   regionSynergy.updateRegionSynergies(state.players[0]);
@@ -790,13 +796,16 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
 
-    const gameState = room.gameState;
+    let gameState = room.gameState;
     const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
     if (playerIndex === -1) return;
 
     const result = combatSystem.processAttack(gameState, playerIndex, attackerIndex, targetIndex);
 
     if (result.success) {
+      gameState = result.gameState;
+      const effectMessages = result.effectMessages || [];
+
       // Apply kill reward if defender was destroyed
       if (result.combatResult.defenderDestroyed) {
         const player = gameState.players[playerIndex];
@@ -825,8 +834,15 @@ io.on('connection', (socket) => {
       regionSynergy.updateRegionSynergies(gameState.players[0]);
       regionSynergy.updateRegionSynergies(gameState.players[1]);
 
+      // Store effect messages
+      gameState.effectMessages = effectMessages;
+      room.gameState = gameState;
+
       io.to(roomId).emit('game_update', gameState);
-      io.to(roomId).emit('combat_result', result.combatResult);
+      io.to(roomId).emit('combat_result', {
+        ...result.combatResult,
+        effectMessages
+      });
     } else {
       socket.emit('action_error', { error: result.error });
     }
@@ -837,7 +853,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
 
-    const gameState = room.gameState;
+    let gameState = room.gameState;
     const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
     if (playerIndex === -1) return;
 
@@ -850,10 +866,21 @@ io.on('connection', (socket) => {
     const result = economySystem.equipItem(gameState, playerIndex, itemIndex, championIndex);
 
     if (result.success) {
+      gameState = result.gameState;
+      const effectMessages = result.effectMessages || [];
+
       // Update region synergies
       regionSynergy.updateRegionSynergies(gameState.players[playerIndex]);
+
+      // Store effect messages
+      gameState.effectMessages = effectMessages;
+      room.gameState = gameState;
+
       io.to(roomId).emit('game_update', gameState);
-      socket.emit('item_equipped', { goldSpent: result.goldSpent });
+      socket.emit('item_equipped', {
+        goldSpent: result.goldSpent,
+        effectMessages
+      });
     } else {
       socket.emit('action_error', { error: result.error });
     }
@@ -875,6 +902,47 @@ io.on('connection', (socket) => {
       regionSynergy.updateRegionSynergies(gameState.players[playerIndex]);
       io.to(roomId).emit('game_update', gameState);
       io.to(roomId).emit('spell_used', { spellType: result.spellUsed, playerIndex });
+    } else {
+      socket.emit('action_error', { error: result.error });
+    }
+  });
+
+  // Play spell card
+  socket.on('play_spell', ({ roomId, cardIndex, targetData }) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+
+    let gameState = room.gameState;
+    const playerIndex = gameState.players.findIndex(p => p.id === socket.id);
+    if (playerIndex === -1) return;
+
+    // Check phase
+    if (gameState.phase !== 'MAIN1' && gameState.phase !== 'MAIN2') {
+      socket.emit('action_error', { error: 'Can only play spells during Main Phase' });
+      return;
+    }
+
+    // Check if it's player's turn
+    if (gameState.currentPlayer !== playerIndex) {
+      socket.emit('action_error', { error: 'Not your turn' });
+      return;
+    }
+
+    const result = economySystem.playSpellCard(gameState, playerIndex, cardIndex, targetData || {});
+
+    if (result.success) {
+      gameState = result.gameState;
+      const effectMessages = result.effectMessages || [];
+
+      // Update region synergies
+      regionSynergy.updateRegionSynergies(gameState.players[playerIndex]);
+
+      // Store effect messages
+      gameState.effectMessages = effectMessages;
+      room.gameState = gameState;
+
+      io.to(roomId).emit('game_update', gameState);
+      io.to(roomId).emit('spell_played', { effectMessages });
     } else {
       socket.emit('action_error', { error: result.error });
     }
@@ -904,14 +972,23 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
 
-    const gameState = room.gameState;
+    let gameState = room.gameState;
     const previousPlayer = gameState.currentPlayer;
+    const effectMessages = [];
+
+    // Process END phase effects for ending player
+    const endPhaseResult = combatSystem.processEndPhase(gameState, previousPlayer);
+    gameState = endPhaseResult.gameState;
+    effectMessages.push(...endPhaseResult.effectMessages);
 
     // Reset combat flags for the ending player
     combatSystem.resetTurnCombatFlags(gameState.players[previousPlayer]);
 
     // Switch player
     gameState.currentPlayer = gameState.currentPlayer === 0 ? 1 : 0;
+
+    // Reset turn-based effect tracking for new player
+    effectSystem.resetTurnEffects(gameState.gameId, gameState.currentPlayer);
 
     // Process new turn for the new current player
     const currentPlayerState = gameState.players[gameState.currentPlayer];
@@ -922,6 +999,11 @@ io.on('connection', (socket) => {
       currentPlayerState.hand.push(drawnCard);
     }
 
+    // Process DRAW phase effects
+    const drawPhaseResult = combatSystem.processDrawPhase(gameState, gameState.currentPlayer);
+    gameState = drawPhaseResult.gameState;
+    effectMessages.push(...drawPhaseResult.effectMessages);
+
     // STANDBY phase effects
     // 1. Increment turnsOnBoard for all champions
     combatSystem.incrementTurnsOnBoard(currentPlayerState);
@@ -929,7 +1011,12 @@ io.on('connection', (socket) => {
     // 2. Apply turn income (+100 gold)
     economySystem.applyTurnIncome(currentPlayerState);
 
-    // 3. Update region synergies
+    // 3. Process STANDBY phase effects (Rod of Ages, Warmog's, etc.)
+    const standbyPhaseResult = combatSystem.processStandbyPhase(gameState, gameState.currentPlayer);
+    gameState = standbyPhaseResult.gameState;
+    effectMessages.push(...standbyPhaseResult.effectMessages);
+
+    // 4. Update region synergies
     regionSynergy.updateRegionSynergies(currentPlayerState);
 
     // Reset phase to DRAW (will auto-advance through phases)
@@ -938,10 +1025,15 @@ io.on('connection', (socket) => {
       gameState.turn++;
     }
 
+    // Store effect messages in game state for UI
+    gameState.effectMessages = effectMessages;
+    room.gameState = gameState;
+
     io.to(roomId).emit('game_update', gameState);
     io.to(roomId).emit('turn_changed', {
       currentPlayer: gameState.currentPlayer,
-      turn: gameState.turn
+      turn: gameState.turn,
+      effectMessages
     });
   });
 

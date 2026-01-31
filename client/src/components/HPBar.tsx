@@ -15,7 +15,10 @@ export default function HPBar({
   size = 'md',
   variant = 'player'
 }: HPBarProps) {
-  const percentage = Math.max(0, Math.min(100, (current / max) * 100));
+  // Handle overhealing - HP can exceed max
+  const isOverhealed = current > max;
+  const displayMax = isOverhealed ? current : max;
+  const percentage = Math.max(0, Math.min(100, (current / displayMax) * 100));
 
   const sizeConfig = {
     sm: { height: 'h-4', text: 'text-[9px]', icon: 'w-3 h-3', padding: 'px-1' },
@@ -27,6 +30,15 @@ export default function HPBar({
 
   // Dynamic colors based on HP percentage
   const getColors = () => {
+    // Overhealed - special cyan/blue glow
+    if (isOverhealed) {
+      return {
+        fill: 'from-cyan-300 via-blue-400 to-cyan-500',
+        glow: 'rgba(34, 211, 238, 0.7)',
+        accent: '#22d3ee',
+        bg: 'from-cyan-900/50 to-cyan-950/50',
+      };
+    }
     if (percentage > 60) {
       return {
         fill: 'from-emerald-300 via-green-400 to-emerald-500',
@@ -138,7 +150,7 @@ export default function HPBar({
         {showText && (
           <div className={`absolute inset-0 flex items-center justify-center ${config.padding}`}>
             <span
-              className={`${config.text} font-black tracking-wider text-white`}
+              className={`${config.text} font-black tracking-wider ${isOverhealed ? 'text-cyan-200' : 'text-white'}`}
               style={{
                 textShadow: '0 1px 2px rgba(0,0,0,1), 0 0 8px rgba(0,0,0,0.8), 0 0 2px rgba(0,0,0,1)',
                 letterSpacing: '0.05em',
@@ -147,6 +159,7 @@ export default function HPBar({
               {current.toLocaleString()}
               <span className="opacity-60 mx-0.5">/</span>
               <span className="opacity-80">{max.toLocaleString()}</span>
+              {isOverhealed && <span className="text-cyan-300 ml-1 text-[8px]">+{(current - max).toLocaleString()}</span>}
             </span>
           </div>
         )}

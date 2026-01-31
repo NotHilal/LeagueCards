@@ -27,11 +27,13 @@ interface GameCard {
   id: string;
   name: string;
   type: 'MONSTER' | 'ITEM' | 'RUNE' | 'SUMMONER_SPELL' | 'JUNGLE_MONSTER';
+  spellType?: 'NORMAL_SPELL' | 'CONTINUOUS_SPELL' | 'EQUIP_SPELL' | 'NORMAL_TRAP' | 'CONTINUOUS_TRAP' | 'EQUIP_TRAP';
   attack?: number;
   defense?: number;
   level?: number;
   description: string;
   image?: string;
+  itemEffect?: string;
   runeEffect?: string;
   runePath?: string;
   region?: string;
@@ -97,9 +99,10 @@ interface PlayerState {
 interface GameState {
   players: [PlayerState, PlayerState];
   currentPlayer: 0 | 1;
-  phase: 'DRAW' | 'STANDBY' | 'MAIN1' | 'BATTLE' | 'END';
+  phase: 'DRAW' | 'STANDBY' | 'MAIN1' | 'BATTLE' | 'MAIN2' | 'END';
   turn: number;
   winner?: string;
+  effectMessages?: string[];
 }
 
 interface RuneCard {
@@ -118,6 +121,11 @@ interface ActiveRune {
 
 type GameMode = 'normal' | 'attack' | 'equip' | 'target_spell';
 type SummonMode = 'attack' | 'defense';
+
+interface ChampionAction {
+  championIndex: number;
+  champion: FieldCard;
+}
 
 const RUNE_DURATION = 3;
 
@@ -150,6 +158,15 @@ export default function GameBoard({ mode }: GameBoardProps) {
 
   // Card preview state
   const [previewCard, setPreviewCard] = useState<GameCard | null>(null);
+
+  // Effect messages state
+  const [effectMessages, setEffectMessages] = useState<string[]>([]);
+
+  // Champion action panel state
+  const [selectedChampionAction, setSelectedChampionAction] = useState<ChampionAction | null>(null);
+
+  // Attack target selection state
+  const [showAttackTargets, setShowAttackTargets] = useState(false);
 
   // Drag and drop state
   const [draggedCardIndex, setDraggedCardIndex] = useState<number | null>(null);
@@ -233,6 +250,37 @@ export default function GameBoard({ mode }: GameBoardProps) {
       console.log('Combat result:', result);
       setGameMode('normal');
       setSelectedAttacker(null);
+      // Show effect messages
+      if (result.effectMessages && result.effectMessages.length > 0) {
+        setEffectMessages(result.effectMessages);
+        // Auto-clear after 5 seconds
+        setTimeout(() => setEffectMessages([]), 5000);
+      }
+    });
+
+    newSocket.on('turn_changed', (data: any) => {
+      console.log('Turn changed:', data);
+      // Show effect messages from turn change
+      if (data.effectMessages && data.effectMessages.length > 0) {
+        setEffectMessages(data.effectMessages);
+        setTimeout(() => setEffectMessages([]), 5000);
+      }
+    });
+
+    newSocket.on('spell_played', (data: any) => {
+      console.log('Spell played:', data);
+      if (data.effectMessages && data.effectMessages.length > 0) {
+        setEffectMessages(data.effectMessages);
+        setTimeout(() => setEffectMessages([]), 5000);
+      }
+    });
+
+    newSocket.on('item_equipped', (data: any) => {
+      console.log('Item equipped:', data);
+      if (data.effectMessages && data.effectMessages.length > 0) {
+        setEffectMessages(data.effectMessages);
+        setTimeout(() => setEffectMessages([]), 5000);
+      }
     });
 
     newSocket.on('action_error', (err: { error: string }) => {
@@ -323,7 +371,8 @@ export default function GameBoard({ mode }: GameBoardProps) {
 
   // Drag and Drop handlers
   const handleDragStart = (e: React.DragEvent, index: number, card: GameCard, cardElement: HTMLElement | null) => {
-    if (!gameState || gameState.currentPlayer !== playerIndex || gameState.phase !== 'MAIN1') return;
+    const isMainPhase = gameState?.phase === 'MAIN1' || gameState?.phase === 'MAIN2';
+    if (!gameState || gameState.currentPlayer !== playerIndex || !isMainPhase) return;
 
     setDraggedCardIndex(index);
     setDraggedCardType(card.type as 'MONSTER' | 'ITEM' | 'RUNE');
@@ -371,9 +420,17 @@ export default function GameBoard({ mode }: GameBoardProps) {
     // Item to spell zone - show equip popup if there are champions
     else if (zone === 'spellZone' && card.type === 'ITEM') {
       const hasChampions = currentPlayerState.field.champions.some(c => c !== null);
+      const isEquipCard = card.spellType === 'EQUIP_SPELL' || card.spellType === 'EQUIP_TRAP';
 
-      if (hasChampions) {
-        // Show popup to choose champion
+      // Equip cards require a champion on the field
+      if (isEquipCard && !hasChampions) {
+        setDraggedCardIndex(null);
+        setDraggedCardType(null);
+        return; // Can't play equip cards without champions
+      }
+
+      if (isEquipCard && hasChampions) {
+        // Show popup to choose champion for equip cards
         setPendingItemEquip({
           cardIndex: draggedCardIndex,
           card: card,
@@ -382,7 +439,7 @@ export default function GameBoard({ mode }: GameBoardProps) {
         setDraggedCardType(null);
         return;
       } else {
-        // General item - apply effect to all champions or place in spell zone
+        // Non-equip items (Normal/Continuous spells/traps) - place in spell zone
         if (currentPlayerState.field.spellZone[index] !== null) return;
 
         const fieldCard: FieldCard = {
@@ -627,12 +684,18 @@ export default function GameBoard({ mode }: GameBoardProps) {
       setSummonMode('attack'); // Reset to attack mode after summoning
       setGameState({ ...gameState });
     } else if (zone === 'spellZone' && (card.type === 'ITEM' || card.type === 'RUNE' || card.type === 'SUMMONER_SPELL')) {
-      // For items, show champion selection popup if there are champions
+      // For items, check if it's an equip card
       if (card.type === 'ITEM') {
         const hasChampions = currentPlayerState.field.champions.some(c => c !== null);
+        const isEquipCard = card.spellType === 'EQUIP_SPELL' || card.spellType === 'EQUIP_TRAP';
 
-        if (hasChampions) {
-          // Show popup to choose champion (treat all items as equipable for now)
+        // Equip cards require a champion on the field
+        if (isEquipCard && !hasChampions) {
+          return; // Can't play equip cards without champions
+        }
+
+        if (isEquipCard && hasChampions) {
+          // Show popup to choose champion for equip cards
           setPendingItemEquip({
             cardIndex: selectedCard,
             card: card,
@@ -641,7 +704,7 @@ export default function GameBoard({ mode }: GameBoardProps) {
         }
       }
 
-      // Non-equipable items, runes, or summoner spells go to spell zone
+      // Non-equip items, runes, or summoner spells go to spell zone
       if (currentPlayerState.field.spellZone[index] !== null) return;
 
       const fieldCard: FieldCard = {
@@ -671,28 +734,8 @@ export default function GameBoard({ mode }: GameBoardProps) {
   const handleChampionClick = (index: number, isOpponent: boolean) => {
     if (!gameState) return;
 
-    const isMyTurn = gameState.currentPlayer === playerIndex;
-
-    // Attack mode - selecting target
-    if (gameMode === 'attack' && selectedAttacker !== null && isOpponent && isMyTurn) {
-      if (socket) {
-        socket.emit('declare_attack', {
-          roomId: mode === 'multiplayer' ? roomId : `solo_${socket.id}`,
-          attackerIndex: selectedAttacker,
-          targetIndex: index,
-        });
-      }
-      return;
-    }
-
-    // Selecting own champion as attacker
-    if (!isOpponent && isMyTurn && gameState.phase === 'BATTLE') {
-      const champion = gameState.players[playerIndex].field.champions[index];
-      if (champion && !champion.hasAttacked && champion.position === 'ATTACK' && champion.turnsOnBoard > 0) {
-        setGameMode('attack');
-        setSelectedAttacker(index);
-      }
-    }
+    // Attack mode is handled by the attack target panel
+    // Champion action bubbles are handled inline in the render
   };
 
   const handleDirectAttack = () => {
@@ -712,43 +755,14 @@ export default function GameBoard({ mode }: GameBoardProps) {
     }
   };
 
-  const handleChangePosition = (index: number) => {
-    if (!gameState || !socket) return;
-    if (gameState.currentPlayer !== playerIndex) return;
-    if (gameState.phase !== 'MAIN1') return;
-
-    const champion = gameState.players[playerIndex].field.champions[index];
-    if (!champion || champion.hasChangedPosition || champion.turnsOnBoard === 0) return;
-
-    const newPosition = champion.position === 'ATTACK' ? 'DEFENSE' : 'ATTACK';
-
-    // Update locally for solo mode
-    if (mode === 'solo') {
-      champion.position = newPosition;
-      champion.hasChangedPosition = true;
-      champion.faceUp = true;
-      setGameState({ ...gameState });
-    } else {
-      socket.emit('game_action', {
-        roomId: roomId,
-        action: {
-          type: 'CHANGE_POSITION',
-          data: { cardFieldIndex: index, newPosition },
-        },
-      });
-    }
-  };
-
-  const handleChangePhase = () => {
+  const handleChangePhase = (targetPhase?: 'MAIN1' | 'BATTLE' | 'MAIN2') => {
     if (!socket || !gameState) return;
     if (gameState.currentPlayer !== playerIndex) return;
 
     // For solo mode, update locally
     if (mode === 'solo') {
-      const phaseOrder = ['DRAW', 'STANDBY', 'MAIN1', 'BATTLE', 'END'];
-      const currentIndex = phaseOrder.indexOf(gameState.phase);
-      if (currentIndex < phaseOrder.length - 1) {
-        gameState.phase = phaseOrder[currentIndex + 1] as any;
+      if (targetPhase) {
+        gameState.phase = targetPhase;
         setGameState({ ...gameState });
       }
     } else {
@@ -1029,7 +1043,10 @@ export default function GameBoard({ mode }: GameBoardProps) {
   return (
     <div
       className="min-h-screen flex items-center justify-center bg-gray-950 overflow-hidden"
-      onClick={() => setPreviewCard(null)}
+      onClick={() => {
+        setPreviewCard(null);
+        setSelectedChampionAction(null);
+      }}
     >
       <div className="flex flex-col p-2 relative" style={{ width: '100vw', maxWidth: '1450px', height: '100vh', maxHeight: '900px' }}>
 
@@ -1067,41 +1084,63 @@ export default function GameBoard({ mode }: GameBoardProps) {
           </div>
         )}
 
-        {/* Card Preview Panel */}
+        {/* Effect Messages Overlay */}
+        {effectMessages.length > 0 && (
+          <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none">
+            <div className="bg-black/90 border-2 border-yellow-500/70 rounded-xl p-4 shadow-2xl shadow-yellow-500/20 max-w-md">
+              <div className="text-yellow-400 text-sm font-bold mb-2 text-center">Effect Activated!</div>
+              <div className="space-y-1">
+                {effectMessages.map((msg, idx) => (
+                  <div key={idx} className="text-white text-sm text-center animate-pulse">
+                    {msg}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Card Preview Panel - Large readable version */}
         {previewCard && (
-          <div className="fixed top-[80px] right-[250px] z-40 pointer-events-none">
-            {/* Custom large readable card */}
+          <div className="fixed top-[60px] right-[200px] z-40 pointer-events-none">
             <div className="relative pointer-events-auto">
               {/* Outer glow */}
-              <div className={`absolute -inset-1 rounded-2xl blur-md opacity-60 ${
+              <div className={`absolute -inset-2 rounded-2xl blur-lg opacity-50 ${
                 previewCard.type === 'MONSTER' ? 'bg-orange-500' :
                 previewCard.type === 'ITEM' ? 'bg-green-500' :
                 previewCard.type === 'RUNE' ? 'bg-purple-500' : 'bg-blue-500'
               }`} />
 
-              <div className={`relative w-[200px] h-[310px] rounded-xl overflow-hidden shadow-2xl border-2 flex flex-col ${
+              <div className={`relative w-[260px] h-[360px] rounded-xl overflow-hidden shadow-2xl border-2 flex flex-col ${
                 previewCard.type === 'MONSTER' ? 'border-orange-400/80' :
                 previewCard.type === 'ITEM' ? 'border-green-400/80' :
                 previewCard.type === 'RUNE' ? 'border-purple-400/80' : 'border-blue-400/80'
               } bg-gradient-to-b from-slate-800 to-slate-950`}>
 
-                {/* Header */}
-                <div className={`px-2 py-1.5 ${
-                  previewCard.type === 'MONSTER' ? 'bg-gradient-to-r from-orange-600/90 to-orange-800/90' :
-                  previewCard.type === 'ITEM' ? 'bg-gradient-to-r from-green-600/90 to-green-800/90' :
-                  previewCard.type === 'RUNE' ? 'bg-gradient-to-r from-purple-600/90 to-purple-800/90' : 'bg-gradient-to-r from-blue-600/90 to-blue-800/90'
+                {/* Header with name and type */}
+                <div className={`px-3 py-2 ${
+                  previewCard.type === 'MONSTER' ? 'bg-gradient-to-r from-orange-600 to-orange-800' :
+                  previewCard.type === 'ITEM' ? 'bg-gradient-to-r from-green-600 to-green-800' :
+                  previewCard.type === 'RUNE' ? 'bg-gradient-to-r from-purple-600 to-purple-800' : 'bg-gradient-to-r from-blue-600 to-blue-800'
                 }`}>
-                  <h3 className="text-white font-bold text-sm drop-shadow-lg truncate">{previewCard.name}</h3>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className="text-white/80 text-[10px] font-medium">{previewCard.type}</span>
+                  <h3 className="text-white font-bold text-base drop-shadow-lg">{previewCard.name}</h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-white/90 text-xs font-medium bg-black/30 px-2 py-0.5 rounded">
+                      {previewCard.type === 'ITEM' || previewCard.type === 'RUNE' ? (
+                        previewCard.spellType?.replace('_', ' ').replace('SPELL', 'Magic').replace('TRAP', 'Trap') || previewCard.type
+                      ) : previewCard.type}
+                    </span>
                     {previewCard.region && (
-                      <span className="text-yellow-300 text-[10px] font-medium">• {previewCard.region}</span>
+                      <span className="text-yellow-300 text-xs font-medium">{previewCard.region}</span>
+                    )}
+                    {previewCard.runePath && (
+                      <span className="text-purple-300 text-xs font-medium">{previewCard.runePath}</span>
                     )}
                   </div>
                 </div>
 
                 {/* Image Area */}
-                <div className="h-[145px] bg-gradient-to-b from-gray-800 to-gray-900 flex items-center justify-center relative">
+                <div className="h-[110px] bg-gradient-to-b from-gray-800 to-gray-900 flex items-center justify-center relative">
                   {previewCard.image ? (
                     <img
                       src={previewCard.image.startsWith('/') ? `http://localhost:3001${previewCard.image}` : `http://localhost:3001/images/cards/${previewCard.image}`}
@@ -1109,57 +1148,87 @@ export default function GameBoard({ mode }: GameBoardProps) {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <span className="text-4xl drop-shadow-lg">
+                    <span className="text-5xl drop-shadow-lg">
                       {previewCard.type === 'MONSTER' ? '⚔️' : previewCard.type === 'ITEM' ? '🛡️' : previewCard.type === 'RUNE' ? '🔮' : '✨'}
                     </span>
                   )}
-                  {/* Gradient overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
                 </div>
 
-                {/* Stats for Monsters */}
-                {(previewCard.type === 'MONSTER' || previewCard.type === 'JUNGLE_MONSTER') && (
-                  <div className="flex justify-center gap-2 px-2 py-1.5 bg-black/60">
-                    <div className="flex items-center gap-1 bg-gradient-to-r from-orange-600 to-orange-700 px-2 py-1 rounded-md shadow-lg">
-                      <span className="text-sm">⚔️</span>
-                      <span className="text-white font-bold text-sm">{previewCard.attack}</span>
-                    </div>
-                    <div className="flex items-center gap-1 bg-gradient-to-r from-blue-600 to-blue-700 px-2 py-1 rounded-md shadow-lg">
-                      <span className="text-sm">🛡️</span>
-                      <span className="text-white font-bold text-sm">{previewCard.defense}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Item stats */}
-                {previewCard.type === 'ITEM' && (previewCard.atkBonus || previewCard.defBonus || previewCard.goldCost) && (
-                  <div className="flex justify-center gap-1 px-2 py-1.5 bg-black/60">
-                    {previewCard.goldCost && (
-                      <div className="flex items-center bg-yellow-600/80 px-1.5 py-0.5 rounded-md">
-                        <span className="text-yellow-200 font-bold text-xs">{previewCard.goldCost}g</span>
+                {/* Stats Bar */}
+                <div className="flex items-center justify-center gap-3 px-3 py-2 bg-black/70">
+                  {/* Monster stats */}
+                  {(previewCard.type === 'MONSTER' || previewCard.type === 'JUNGLE_MONSTER') && (
+                    <>
+                      <div className="flex items-center gap-1.5 bg-gradient-to-r from-orange-600 to-orange-700 px-3 py-1 rounded-lg shadow-lg">
+                        <span className="text-base">⚔️</span>
+                        <span className="text-white font-bold text-lg">{previewCard.attack}</span>
                       </div>
-                    )}
-                    {previewCard.atkBonus && (
-                      <div className="flex items-center bg-orange-600/80 px-1.5 py-0.5 rounded-md">
-                        <span className="text-white font-bold text-xs">+{previewCard.atkBonus}</span>
+                      <div className="flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-blue-700 px-3 py-1 rounded-lg shadow-lg">
+                        <span className="text-base">🛡️</span>
+                        <span className="text-white font-bold text-lg">{previewCard.defense}</span>
                       </div>
-                    )}
-                    {previewCard.defBonus && (
-                      <div className="flex items-center bg-blue-600/80 px-1.5 py-0.5 rounded-md">
-                        <span className="text-white font-bold text-xs">+{previewCard.defBonus}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Description */}
-                <div className="p-2 bg-slate-900/95 flex-1 overflow-auto">
-                  <p className="text-gray-200 text-xs leading-relaxed">{previewCard.description}</p>
-                  {previewCard.itemEffect && (
-                    <p className="text-green-400 text-xs mt-1 italic border-t border-green-500/30 pt-1">{previewCard.itemEffect}</p>
+                      {previewCard.level && (
+                        <div className="flex items-center gap-1 bg-gradient-to-r from-yellow-600 to-yellow-700 px-2 py-1 rounded-lg">
+                          <span className="text-sm">⭐</span>
+                          <span className="text-white font-bold text-sm">Lv{previewCard.level}</span>
+                        </div>
+                      )}
+                    </>
                   )}
+                  {/* Item/Rune cost */}
+                  {(previewCard.type === 'ITEM' || previewCard.type === 'RUNE') && previewCard.goldCost && (
+                    <div className="flex items-center gap-1.5 bg-gradient-to-r from-yellow-600 to-amber-700 px-3 py-1 rounded-lg shadow-lg">
+                      <span className="text-base">💰</span>
+                      <span className="text-yellow-100 font-bold text-lg">{previewCard.goldCost}g</span>
+                    </div>
+                  )}
+                  {/* Item bonus stats */}
+                  {previewCard.type === 'ITEM' && previewCard.atkBonus && (
+                    <div className="flex items-center gap-1 bg-orange-600/80 px-2 py-1 rounded-lg">
+                      <span className="text-white font-bold text-sm">+{previewCard.atkBonus} ATK</span>
+                    </div>
+                  )}
+                  {previewCard.type === 'ITEM' && previewCard.defBonus && (
+                    <div className="flex items-center gap-1 bg-blue-600/80 px-2 py-1 rounded-lg">
+                      <span className="text-white font-bold text-sm">+{previewCard.defBonus} DEF</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Effect Text - Main focus */}
+                <div className="p-3 bg-slate-900/95 flex-1 overflow-auto">
+                  {/* Item Effect */}
+                  {previewCard.itemEffect && (
+                    <div>
+                      <span className="text-green-400 text-[10px] font-bold uppercase tracking-wide">Effect</span>
+                      <p className="text-green-300 text-sm leading-relaxed mt-1">{previewCard.itemEffect}</p>
+                    </div>
+                  )}
+                  {/* Rune Effect */}
                   {previewCard.runeEffect && (
-                    <p className="text-purple-400 text-xs mt-1 italic border-t border-purple-500/30 pt-1">{previewCard.runeEffect}</p>
+                    <div>
+                      <span className="text-purple-400 text-[10px] font-bold uppercase tracking-wide">Effect</span>
+                      <p className="text-purple-300 text-sm leading-relaxed mt-1">{previewCard.runeEffect}</p>
+                    </div>
+                  )}
+                  {/* Summoner Spell Effect */}
+                  {previewCard.summonerEffect && (
+                    <div>
+                      <span className="text-blue-400 text-[10px] font-bold uppercase tracking-wide">Effect</span>
+                      <p className="text-blue-300 text-sm leading-relaxed mt-1">{previewCard.summonerEffect}</p>
+                    </div>
+                  )}
+                  {/* Team Effect for Jungle Monsters */}
+                  {previewCard.teamEffect && (
+                    <div>
+                      <span className="text-teal-400 text-[10px] font-bold uppercase tracking-wide">Team Buff</span>
+                      <p className="text-teal-300 text-sm leading-relaxed mt-1">{previewCard.teamEffect}</p>
+                    </div>
+                  )}
+                  {/* Monster/Champion description */}
+                  {previewCard.type === 'MONSTER' && previewCard.description && (
+                    <p className="text-gray-300 text-xs leading-relaxed italic">{previewCard.description}</p>
                   )}
                 </div>
               </div>
@@ -1307,12 +1376,116 @@ export default function GameBoard({ mode }: GameBoardProps) {
           </div>
         )}
 
-        {/* Mode indicator */}
-        {gameMode !== 'normal' && (
+        {/* Attack Target Selection - Game-style Bar */}
+        {gameMode === 'attack' && selectedAttacker !== null && (
+          <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50">
+            {/* Outer glow */}
+            <div className="absolute -inset-1 bg-gradient-to-r from-orange-500 via-red-500 to-orange-500 rounded-2xl blur opacity-50 animate-pulse" />
+
+            <div className="relative bg-gradient-to-b from-slate-800 via-slate-900 to-slate-950 border border-orange-500/50 rounded-xl px-5 py-3 shadow-2xl">
+              {/* Top accent line */}
+              <div className="absolute top-0 left-4 right-4 h-[2px] bg-gradient-to-r from-transparent via-orange-400 to-transparent" />
+
+              <div className="flex items-center gap-5">
+                {/* Attacker info */}
+                <div className="flex items-center gap-2 pr-4 border-r border-orange-500/30">
+                  <div className="w-8 h-8 rounded bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center shadow-lg">
+                    <span className="text-lg">⚔️</span>
+                  </div>
+                  <div>
+                    <div className="text-orange-300 text-[10px] uppercase tracking-wider">Attacker</div>
+                    <div className="text-white font-bold text-sm">{currentPlayerState.field.champions[selectedAttacker]?.card.name}</div>
+                  </div>
+                </div>
+
+                {/* Arrow */}
+                <div className="text-orange-400 text-xl">→</div>
+
+                {/* Target Options */}
+                <div className="flex items-center gap-2">
+                  {opponent.field.champions.some(c => c !== null) ? (
+                    // Show enemy champions as targets
+                    opponent.field.champions.map((champion, index) => {
+                      if (!champion) return null;
+                      return (
+                        <button
+                          key={index}
+                          onClick={() => {
+                            if (socket) {
+                              socket.emit('declare_attack', {
+                                roomId: mode === 'multiplayer' ? roomId : `solo_${socket.id}`,
+                                attackerIndex: selectedAttacker,
+                                targetIndex: index
+                              });
+                            }
+                            setGameMode('normal');
+                            setSelectedAttacker(null);
+                          }}
+                          className="group relative overflow-hidden rounded-lg transition-all duration-200 hover:scale-105"
+                        >
+                          <div className="px-4 py-2 bg-gradient-to-b from-red-500 via-red-600 to-red-700 shadow-lg shadow-red-500/30 flex items-center gap-2">
+                            <span className="text-white font-bold text-sm">{champion.card.name}</span>
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${
+                              champion.position === 'ATTACK'
+                                ? 'bg-orange-500/50 text-orange-200'
+                                : 'bg-blue-500/50 text-blue-200'
+                            }`}>
+                              {champion.position === 'ATTACK' ? `⚔${champion.currentAttack}` : `🛡${champion.currentDefense}`}
+                            </span>
+                          </div>
+                          <div className="absolute inset-0 bg-gradient-to-t from-transparent via-white/10 to-white/30 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      );
+                    })
+                  ) : (
+                    // Direct attack option
+                    <button
+                      onClick={() => {
+                        if (socket) {
+                          socket.emit('declare_attack', {
+                            roomId: mode === 'multiplayer' ? roomId : `solo_${socket.id}`,
+                            attackerIndex: selectedAttacker,
+                            targetIndex: -1
+                          });
+                        }
+                        setGameMode('normal');
+                        setSelectedAttacker(null);
+                      }}
+                      className="group relative overflow-hidden rounded-lg transition-all duration-200 hover:scale-105"
+                    >
+                      <div className="px-5 py-2 bg-gradient-to-b from-orange-400 via-orange-500 to-red-600 shadow-lg shadow-orange-500/50 flex items-center gap-2">
+                        <span className="text-2xl">💥</span>
+                        <div>
+                          <div className="text-white font-bold text-sm">DIRECT ATTACK</div>
+                          <div className="text-orange-200 text-xs">{currentPlayerState.field.champions[selectedAttacker]?.currentAttack} damage</div>
+                        </div>
+                      </div>
+                      <div className="absolute inset-0 bg-gradient-to-t from-transparent via-white/10 to-white/30 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Cancel */}
+                <button
+                  onClick={() => {
+                    setGameMode('normal');
+                    setSelectedAttacker(null);
+                  }}
+                  className="ml-2 px-3 py-2 bg-gradient-to-b from-gray-600 to-gray-700 hover:from-gray-500 hover:to-gray-600 text-gray-300 rounded-lg text-xs font-bold transition-all border border-gray-500/50"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+        {/* Mode indicator for non-attack modes */}
+        {gameMode !== 'normal' && gameMode !== 'attack' && (
           <div className="absolute top-12 left-1/2 transform -translate-x-1/2 z-20 bg-slate-900/95 border border-yellow-500/50 rounded-lg px-4 py-2">
             <div className="flex items-center gap-3">
               <span className="text-yellow-400 text-sm font-bold">
-                {gameMode === 'attack' && 'Select Attack Target'}
                 {gameMode === 'equip' && 'Select Champion to Equip'}
                 {gameMode === 'target_spell' && `Select Target for ${pendingSpellType}`}
               </span>
@@ -1322,14 +1495,6 @@ export default function GameBoard({ mode }: GameBoardProps) {
               >
                 Cancel
               </button>
-              {gameMode === 'attack' && !opponent.field.champions.some(c => c !== null) && (
-                <button
-                  onClick={handleDirectAttack}
-                  className="px-2 py-1 bg-orange-500/50 hover:bg-orange-500 rounded text-xs text-white"
-                >
-                  Direct Attack
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -1495,44 +1660,78 @@ export default function GameBoard({ mode }: GameBoardProps) {
               </div>
             </div>
 
-            {/* Battle Line with Turn Info */}
-            <div className="flex-shrink-0 flex items-center gap-3 py-1">
-              <div
-                className={`px-3 py-1 rounded text-xs font-bold whitespace-nowrap flex items-center gap-2 ${
+            {/* Battle Line with Turn Info - Enhanced Phase UI */}
+            <div className="flex-shrink-0 py-2">
+              <div className="flex items-center justify-center gap-4">
+                {/* Turn Counter - Left */}
+                <span className="text-gray-400 text-sm font-medium">Turn {gameState.turn}</span>
+
+                {/* Turn Status */}
+                <div className={`px-2 py-1 rounded text-xs font-bold ${
                   isMyTurn
-                    ? 'bg-green-600/20 text-green-400 border border-green-500/50'
-                    : 'bg-red-600/20 text-red-400 border border-red-500/50'
-                }`}
-              >
-                <span>Turn {gameState.turn}</span>
-                <span className="text-blue-300 bg-blue-500/20 px-1.5 py-0.5 rounded text-[10px]">{gameState.phase}</span>
-                <span>• {isMyTurn ? 'Your Turn' : 'Enemy'}</span>
-              </div>
-
-              {isMyTurn && (
-                <div className="flex gap-1">
-                  {gameState.phase === 'MAIN1' && (
-                    <button
-                      onClick={handleChangePhase}
-                      className="px-2 py-0.5 bg-orange-500/50 hover:bg-orange-500 rounded text-[10px] text-white"
-                    >
-                      → Battle
-                    </button>
-                  )}
-                  {gameState.phase === 'BATTLE' && (
-                    <button
-                      onClick={handleEndTurn}
-                      className="px-2 py-0.5 bg-green-500/50 hover:bg-green-500 rounded text-[10px] text-white"
-                    >
-                      End Turn
-                    </button>
-                  )}
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/50'
+                    : 'bg-red-500/20 text-red-400 border border-red-500/50'
+                }`}>
+                  {isMyTurn ? 'YOUR TURN' : 'ENEMY TURN'}
                 </div>
-              )}
 
-              <div className="flex-1 h-px bg-gradient-to-r from-yellow-500/50 via-yellow-500/30 to-yellow-500/50" />
-              <span className="text-yellow-500/60 text-xs">⚔</span>
-              <div className="flex-1 h-px bg-gradient-to-r from-yellow-500/50 via-yellow-500/30 to-yellow-500/50" />
+                {/* Phase Selector - Centered clickable buttons */}
+                <div className="flex items-center gap-1">
+                  {(['MAIN1', 'BATTLE', 'MAIN2'] as const).map((phase, idx) => {
+                    const phaseOrder = ['MAIN1', 'BATTLE', 'MAIN2'];
+                    const currentPhaseIdx = phaseOrder.indexOf(gameState.phase);
+                    const thisPhaseIdx = phaseOrder.indexOf(phase);
+                    const isCurrentPhase = gameState.phase === phase;
+                    const isPastPhase = thisPhaseIdx < currentPhaseIdx;
+                    const isFuturePhase = thisPhaseIdx > currentPhaseIdx;
+
+                    const phaseLabels: Record<string, string> = {
+                      'MAIN1': 'M1',
+                      'BATTLE': 'BTL',
+                      'MAIN2': 'M2',
+                    };
+                    const phaseColors: Record<string, string> = {
+                      'MAIN1': 'from-green-500 to-emerald-600',
+                      'BATTLE': 'from-orange-500 to-red-600',
+                      'MAIN2': 'from-teal-500 to-cyan-600',
+                    };
+
+                    return (
+                      <div key={phase} className="flex items-center">
+                        <button
+                          onClick={() => isMyTurn && isFuturePhase && handleChangePhase(phase)}
+                          disabled={!isMyTurn || isPastPhase || isCurrentPhase}
+                          className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                            isCurrentPhase
+                              ? `bg-gradient-to-r ${phaseColors[phase]} text-white shadow-md`
+                              : isPastPhase
+                                ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed'
+                                : isMyTurn && isFuturePhase
+                                  ? 'bg-slate-700/60 text-slate-300 hover:bg-slate-600/80 hover:text-white cursor-pointer'
+                                  : 'bg-slate-800/40 text-slate-500 cursor-not-allowed'
+                          }`}
+                        >
+                          {phaseLabels[phase]}
+                        </button>
+                        {idx < 2 && <div className="w-2 h-px bg-slate-600 mx-0.5" />}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* End Turn Button */}
+                <button
+                  onClick={() => isMyTurn && handleEndTurn()}
+                  disabled={!isMyTurn}
+                  className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                    isMyTurn
+                      ? 'bg-gradient-to-r from-yellow-500 to-amber-600 text-black hover:scale-105 cursor-pointer'
+                      : 'bg-slate-800/40 text-slate-500 cursor-not-allowed'
+                  }`}
+                >
+                  END
+                </button>
+              </div>
             </div>
 
             {/* Player Field */}
@@ -1568,61 +1767,160 @@ export default function GameBoard({ mode }: GameBoardProps) {
                 <div className="flex justify-center gap-3">
                   {currentPlayerState.field.champions.map((slot, index) => {
                     const canAttackNow = slot && !slot.hasAttacked && slot.position === 'ATTACK' && slot.turnsOnBoard > 0 && gameState.phase === 'BATTLE' && isMyTurn;
+                    const isSelected = selectedChampionAction?.championIndex === index;
+                    const canChangePosition = slot && !slot.hasChangedPosition && slot.turnsOnBoard > 0 && (gameState.phase === 'MAIN1' || gameState.phase === 'MAIN2') && isMyTurn;
 
                     return (
                       <div
                         key={index}
+                        className="relative"
                         onClick={(e) => {
                           if (selectedCard !== null && currentPlayerState.hand[selectedCard]?.type === 'MONSTER') {
                             handleFieldClick('champions', index);
                           } else if (gameMode === 'equip' && selectedItemIndex !== null) {
                             handleFieldClick('champions', index);
-                          } else if (slot) {
+                          } else if (slot && isMyTurn && gameMode === 'normal') {
+                            e.stopPropagation();
                             handleFieldCardClick(e, slot, false);
-                            handleChampionClick(index, false);
+                            // Toggle action bubbles
+                            if (isSelected) {
+                              setSelectedChampionAction(null);
+                            } else {
+                              setSelectedChampionAction({ championIndex: index, champion: slot });
+                            }
                           }
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          if (slot) handleChangePosition(index);
                         }}
                         onDragOver={handleDragOver}
                         onDrop={() => handleDropOnField('champions', index)}
-                        className={`bg-gray-700/30 border rounded flex items-center justify-center cursor-pointer transition-all ${
-                          draggedCardType === 'MONSTER' && !slot
-                            ? 'border-green-500 shadow-lg shadow-green-500/30 bg-green-500/10'
-                            : selectedCard !== null && currentPlayerState.hand[selectedCard]?.type === 'MONSTER'
-                              ? 'border-green-500 shadow-lg shadow-green-500/30'
-                              : gameMode === 'equip' && slot
-                                ? 'border-green-500 shadow-lg shadow-green-500/30'
-                                : selectedAttacker === index
-                                  ? 'border-yellow-500 shadow-lg shadow-yellow-500/50'
-                                  : canAttackNow
-                                    ? 'border-orange-500/50 hover:border-orange-500'
-                                    : 'border-gray-600/40 hover:border-yellow-500/50'
-                        }`}
-                        style={{ width: '120px', height: '165px' }}
                       >
-                        {slot ? (
-                          <Card
-                            card={slot.card}
-                            size="field"
-                            faceDown={!slot.faceUp}
-                            position={slot.position}
-                            turnsOnBoard={slot.turnsOnBoard}
-                            currentAttack={slot.currentAttack}
-                            currentDefense={slot.currentDefense}
-                            equippedItems={slot.equippedItems}
-                            isInvincible={slot.isInvincible}
-                            hasAttacked={slot.hasAttacked}
-                            selected={selectedAttacker === index}
-                            canAttack={canAttackNow && gameMode !== 'attack'}
-                          />
-                        ) : (
-                          <div className="w-24 h-32 border border-dashed border-gray-600/30 rounded flex items-center justify-center">
-                            <span className="text-gray-700 text-xl">⬡</span>
+                        {/* Action Bubbles */}
+                        {isSelected && slot && gameMode === 'normal' && (
+                          <div className="absolute -top-14 left-1/2 transform -translate-x-1/2 flex gap-2 z-30">
+                            {/* Attack Button - Battle Phase only */}
+                            {gameState.phase === 'BATTLE' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (canAttackNow) {
+                                    setSelectedAttacker(index);
+                                    setGameMode('attack');
+                                    setSelectedChampionAction(null);
+                                  }
+                                }}
+                                disabled={!canAttackNow}
+                                className={`group relative overflow-hidden rounded-lg transition-all duration-200 ${
+                                  canAttackNow
+                                    ? 'hover:scale-110 hover:-translate-y-1'
+                                    : 'opacity-40 cursor-not-allowed'
+                                }`}
+                                title={slot.hasAttacked ? 'Already attacked' : slot.position !== 'ATTACK' ? 'In Defense' : slot.turnsOnBoard === 0 ? 'Summoning sickness' : 'Attack'}
+                              >
+                                <div className={`px-4 py-2 flex items-center gap-2 ${
+                                  canAttackNow
+                                    ? 'bg-gradient-to-b from-orange-400 via-orange-500 to-orange-600 shadow-lg shadow-orange-500/50'
+                                    : 'bg-gradient-to-b from-gray-500 to-gray-600'
+                                }`}>
+                                  <span className="text-lg drop-shadow-md">⚔️</span>
+                                  <span className="text-white font-bold text-sm drop-shadow-md">ATTACK</span>
+                                </div>
+                                {canAttackNow && (
+                                  <div className="absolute inset-0 bg-gradient-to-t from-transparent via-white/20 to-white/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                )}
+                              </button>
+                            )}
+
+                            {/* Change Position Button - Main Phases only */}
+                            {(gameState.phase === 'MAIN1' || gameState.phase === 'MAIN2') && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (canChangePosition) {
+                                    const newPosition = slot.position === 'ATTACK' ? 'DEFENSE' : 'ATTACK';
+                                    // Update local state immediately for solo mode
+                                    if (mode === 'solo') {
+                                      slot.position = newPosition;
+                                      slot.hasChangedPosition = true;
+                                      setGameState({ ...gameState });
+                                    }
+                                    if (socket) {
+                                      socket.emit('game_action', {
+                                        roomId: mode === 'multiplayer' ? roomId : `solo_${socket.id}`,
+                                        action: {
+                                          type: 'CHANGE_POSITION',
+                                          data: { cardFieldIndex: index, newPosition }
+                                        }
+                                      });
+                                    }
+                                    setSelectedChampionAction(null);
+                                  }
+                                }}
+                                disabled={!canChangePosition}
+                                className={`group relative overflow-hidden rounded-lg transition-all duration-200 ${
+                                  canChangePosition
+                                    ? 'hover:scale-110 hover:-translate-y-1'
+                                    : 'opacity-40 cursor-not-allowed'
+                                }`}
+                                title={slot.hasChangedPosition ? 'Already changed' : slot.turnsOnBoard === 0 ? 'Summoning sickness' : 'Change Position'}
+                              >
+                                <div className={`px-4 py-2 flex items-center gap-2 ${
+                                  canChangePosition
+                                    ? slot.position === 'ATTACK'
+                                      ? 'bg-gradient-to-b from-blue-400 via-blue-500 to-blue-600 shadow-lg shadow-blue-500/50'
+                                      : 'bg-gradient-to-b from-orange-400 via-orange-500 to-orange-600 shadow-lg shadow-orange-500/50'
+                                    : 'bg-gradient-to-b from-gray-500 to-gray-600'
+                                }`}>
+                                  <span className="text-lg drop-shadow-md">{slot.position === 'ATTACK' ? '🛡️' : '⚔️'}</span>
+                                  <span className="text-white font-bold text-sm drop-shadow-md">
+                                    {slot.position === 'ATTACK' ? 'DEFEND' : 'ATTACK'}
+                                  </span>
+                                </div>
+                                {canChangePosition && (
+                                  <div className="absolute inset-0 bg-gradient-to-t from-transparent via-white/20 to-white/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                )}
+                              </button>
+                            )}
                           </div>
                         )}
+
+                        <div
+                          className={`bg-gray-700/30 border rounded flex items-center justify-center cursor-pointer transition-all ${
+                            draggedCardType === 'MONSTER' && !slot
+                              ? 'border-green-500 shadow-lg shadow-green-500/30 bg-green-500/10'
+                              : selectedCard !== null && currentPlayerState.hand[selectedCard]?.type === 'MONSTER'
+                                ? 'border-green-500 shadow-lg shadow-green-500/30'
+                                : gameMode === 'equip' && slot
+                                  ? 'border-green-500 shadow-lg shadow-green-500/30'
+                                  : isSelected
+                                    ? 'border-yellow-400 shadow-lg shadow-yellow-400/50'
+                                    : selectedAttacker === index
+                                      ? 'border-yellow-500 shadow-lg shadow-yellow-500/50'
+                                      : canAttackNow
+                                        ? 'border-orange-500/50 hover:border-orange-500'
+                                        : 'border-gray-600/40 hover:border-yellow-500/50'
+                          }`}
+                          style={{ width: '120px', height: '165px' }}
+                        >
+                          {slot ? (
+                            <Card
+                              card={slot.card}
+                              size="field"
+                              faceDown={!slot.faceUp}
+                              position={slot.position}
+                              turnsOnBoard={slot.turnsOnBoard}
+                              currentAttack={slot.currentAttack}
+                              currentDefense={slot.currentDefense}
+                              equippedItems={slot.equippedItems}
+                              isInvincible={slot.isInvincible}
+                              hasAttacked={slot.hasAttacked}
+                              selected={selectedAttacker === index || isSelected}
+                              canAttack={canAttackNow && gameMode !== 'attack'}
+                            />
+                          ) : (
+                            <div className="w-24 h-32 border border-dashed border-gray-600/30 rounded flex items-center justify-center">
+                              <span className="text-gray-700 text-xl">⬡</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1667,24 +1965,9 @@ export default function GameBoard({ mode }: GameBoardProps) {
             </div>
           </div>
 
-          {/* RIGHT SIDE - End Turn + Player GY/Deck */}
+          {/* RIGHT SIDE - Player GY/Deck */}
           <div className="flex flex-col justify-between flex-shrink-0">
             <div className="flex-1" />
-
-            {/* Action buttons */}
-            <div className="py-2 space-y-2">
-              <button
-                onClick={handleEndTurn}
-                disabled={!isMyTurn}
-                className={`w-full px-2 py-3 rounded font-bold text-sm transition-all ${
-                  isMyTurn
-                    ? 'bg-gradient-to-b from-yellow-500 to-yellow-600 text-black hover:from-yellow-400 hover:to-yellow-500 shadow-lg shadow-yellow-500/40'
-                    : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                }`}
-              >
-                END TURN
-              </button>
-            </div>
 
             <div className="flex-1 flex items-end gap-4">
               <div className="flex flex-col gap-2">
@@ -1731,8 +2014,9 @@ export default function GameBoard({ mode }: GameBoardProps) {
             {currentPlayerState.hand.map((card, index) => {
               const isSelected = selectedCard === index;
               const isMonster = card.type === 'MONSTER';
-              const isDraggable = isMyTurn && gameState.phase === 'MAIN1' && (card.type === 'MONSTER' || card.type === 'ITEM' || card.type === 'RUNE');
-              const showPositionBubbles = isSelected && isMonster && isMyTurn && gameMode === 'normal' && gameState.phase === 'MAIN1';
+              const isMainPhase = gameState.phase === 'MAIN1' || gameState.phase === 'MAIN2';
+              const isDraggable = isMyTurn && isMainPhase && (card.type === 'MONSTER' || card.type === 'ITEM' || card.type === 'RUNE');
+              const showPositionBubbles = isSelected && isMonster && isMyTurn && gameMode === 'normal' && isMainPhase;
               const isPendingDrop = pendingMonsterDrop?.cardIndex === index;
 
               return (

@@ -11,6 +11,7 @@ interface CardProps {
     id: string;
     name: string;
     type: 'MONSTER' | 'ITEM' | 'RUNE' | 'SUMMONER_SPELL' | 'JUNGLE_MONSTER';
+    spellType?: 'NORMAL_SPELL' | 'CONTINUOUS_SPELL' | 'EQUIP_SPELL' | 'NORMAL_TRAP' | 'CONTINUOUS_TRAP' | 'EQUIP_TRAP';
     attack?: number;
     defense?: number;
     level?: number;

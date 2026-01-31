@@ -8,6 +8,8 @@
  * - Starting HP: 8000
  */
 
+import { triggerEffects, applyEffects, getEffectState } from './effectSystem.js';
+
 /**
  * Get the effective attack value of a field card (base + modifiers + items + synergies)
  * @param {Object} fieldCard - The field card
@@ -233,7 +235,7 @@ export function applyCombatResult(gameState, attackerPlayerIndex, attackerCardIn
  * @param {number} attackerPlayerIndex - Index of attacking player
  * @param {number} attackerCardIndex - Index of attacking card on field
  * @param {number} targetCardIndex - Index of target card (-1 for direct attack)
- * @returns {Object} - { success: boolean, gameState: Object, combatResult?: Object, error?: string }
+ * @returns {Object} - { success: boolean, gameState: Object, combatResult?: Object, error?: string, effectMessages?: Array }
  */
 export function processAttack(gameState, attackerPlayerIndex, attackerCardIndex, targetCardIndex) {
   // Validate attack declaration
@@ -267,10 +269,219 @@ export function processAttack(gameState, attackerPlayerIndex, attackerCardIndex,
     }
   }
 
+  const effectMessages = [];
+
+  // Track attack count
+  const effectState = getEffectState(gameState.gameId || 'default');
+  effectState.attacksThisTurn[attackerPlayerIndex]++;
+
+  // Trigger ON_ATTACK effects
+  const attackEffects = triggerEffects(gameState.gameId || 'default', 'ON_ATTACK', {
+    gameState,
+    attackerPlayerIndex,
+    attackerIndex: attackerCardIndex,
+    defenderPlayerIndex,
+    defenderIndex: targetCardIndex,
+    attacker,
+    defender,
+  });
+  if (attackEffects.length > 0) {
+    const result = applyEffects(gameState, attackEffects);
+    gameState = result.gameState;
+    effectMessages.push(...result.messages);
+  }
+
+  // Trigger ON_DIRECT_ATTACK if applicable
+  if (targetCardIndex < 0) {
+    const directEffects = triggerEffects(gameState.gameId || 'default', 'ON_DIRECT_ATTACK', {
+      gameState,
+      attackerPlayerIndex,
+      attackerIndex: attackerCardIndex,
+      attacker,
+    });
+    if (directEffects.length > 0) {
+      const result = applyEffects(gameState, directEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+
+  // Trigger ON_ATTACKED effects (for defender's items)
+  if (defender) {
+    const attackedEffects = triggerEffects(gameState.gameId || 'default', 'ON_ATTACKED', {
+      gameState,
+      attackerPlayerIndex,
+      attackerIndex: attackerCardIndex,
+      defenderPlayerIndex,
+      defenderIndex: targetCardIndex,
+      attacker,
+      defender,
+    });
+    if (attackedEffects.length > 0) {
+      const result = applyEffects(gameState, attackedEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+
   // Resolve combat
   const combatResult = resolveCombat(attacker, defender);
 
-  // Apply result
+  // Check for destruction negation effects
+  let attackerDestroyed = combatResult.attackerDestroyed;
+  let defenderDestroyed = combatResult.defenderDestroyed;
+
+  // Trigger ON_CHAMPION_DESTROYED effects for attacker
+  if (attackerDestroyed) {
+    const destroyEffects = triggerEffects(gameState.gameId || 'default', 'ON_CHAMPION_DESTROYED', {
+      gameState,
+      playerIndex: attackerPlayerIndex,
+      destroyedChampionIndex: attackerCardIndex,
+      destroyedCard: attacker.card,
+    });
+    // Check if destruction was negated
+    const negated = destroyEffects.find(e => e.type === 'NEGATE_DESTRUCTION');
+    if (negated) {
+      attackerDestroyed = false;
+      combatResult.attackerDestroyed = false;
+    }
+    const result = applyEffects(gameState, destroyEffects);
+    gameState = result.gameState;
+    effectMessages.push(...result.messages);
+  }
+
+  // Trigger ON_CHAMPION_DESTROYED effects for defender
+  if (defenderDestroyed && defender) {
+    const destroyEffects = triggerEffects(gameState.gameId || 'default', 'ON_CHAMPION_DESTROYED', {
+      gameState,
+      playerIndex: defenderPlayerIndex,
+      destroyedChampionIndex: targetCardIndex,
+      destroyedCard: defender.card,
+    });
+    // Check if destruction was negated
+    const negated = destroyEffects.find(e => e.type === 'NEGATE_DESTRUCTION');
+    if (negated) {
+      defenderDestroyed = false;
+      combatResult.defenderDestroyed = false;
+    }
+    const result = applyEffects(gameState, destroyEffects);
+    gameState = result.gameState;
+    effectMessages.push(...result.messages);
+  }
+
+  // Trigger ON_DESTROY_MONSTER if attacker destroyed defender
+  if (defenderDestroyed) {
+    const killEffects = triggerEffects(gameState.gameId || 'default', 'ON_DESTROY_MONSTER', {
+      gameState,
+      attackerPlayerIndex,
+      attackerIndex: attackerCardIndex,
+      defenderPlayerIndex,
+      defenderIndex: targetCardIndex,
+      opponentIndex: defenderPlayerIndex,
+    });
+    if (killEffects.length > 0) {
+      const result = applyEffects(gameState, killEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+
+  // Trigger ON_CHAMPION_SURVIVES if champion survived
+  if (!attackerDestroyed && defender) {
+    attacker.survivedBattle = true;
+    const surviveEffects = triggerEffects(gameState.gameId || 'default', 'ON_CHAMPION_SURVIVES', {
+      gameState,
+      playerIndex: attackerPlayerIndex,
+      championIndex: attackerCardIndex,
+      attackerPlayerIndex,
+      attackerIndex: attackerCardIndex,
+    });
+    if (surviveEffects.length > 0) {
+      const result = applyEffects(gameState, surviveEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+  if (!defenderDestroyed && defender) {
+    defender.survivedBattle = true;
+    const surviveEffects = triggerEffects(gameState.gameId || 'default', 'ON_CHAMPION_SURVIVES', {
+      gameState,
+      playerIndex: defenderPlayerIndex,
+      championIndex: targetCardIndex,
+      attackerPlayerIndex,
+      attackerIndex: attackerCardIndex,
+    });
+    if (surviveEffects.length > 0) {
+      const result = applyEffects(gameState, surviveEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+
+  // Trigger ON_BATTLE_DAMAGE if damage was dealt
+  if (combatResult.damageToDefenderOwner > 0) {
+    const damageEffects = triggerEffects(gameState.gameId || 'default', 'ON_BATTLE_DAMAGE', {
+      gameState,
+      attackerPlayerIndex,
+      attackerIndex: attackerCardIndex,
+      damageAmount: combatResult.damageToDefenderOwner,
+    });
+    if (damageEffects.length > 0) {
+      const result = applyEffects(gameState, damageEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+
+  // Trigger ON_TAKE_DAMAGE for damage taken
+  if (combatResult.damageToAttackerOwner > 0) {
+    const takeDamageEffects = triggerEffects(gameState.gameId || 'default', 'ON_TAKE_DAMAGE', {
+      gameState,
+      playerIndex: attackerPlayerIndex,
+      opponentIndex: defenderPlayerIndex,
+      damageAmount: combatResult.damageToAttackerOwner,
+    });
+    if (takeDamageEffects.length > 0) {
+      const result = applyEffects(gameState, takeDamageEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+  if (combatResult.damageToDefenderOwner > 0) {
+    const takeDamageEffects = triggerEffects(gameState.gameId || 'default', 'ON_TAKE_DAMAGE', {
+      gameState,
+      playerIndex: defenderPlayerIndex,
+      opponentIndex: attackerPlayerIndex,
+      damageAmount: combatResult.damageToDefenderOwner,
+    });
+    if (takeDamageEffects.length > 0) {
+      const result = applyEffects(gameState, takeDamageEffects);
+      gameState = result.gameState;
+      effectMessages.push(...result.messages);
+    }
+  }
+
+  // Trigger ON_BATTLE_END effects
+  const battleEndEffects = triggerEffects(gameState.gameId || 'default', 'ON_BATTLE_END', {
+    gameState,
+    attackerPlayerIndex,
+    attackerIndex: attackerCardIndex,
+    defenderPlayerIndex,
+    defenderIndex: targetCardIndex,
+    attacker,
+    defender,
+    combatResult,
+  });
+  if (battleEndEffects.length > 0) {
+    const result = applyEffects(gameState, battleEndEffects);
+    gameState = result.gameState;
+    effectMessages.push(...result.messages);
+  }
+
+  // Apply result (with updated destruction flags)
+  combatResult.attackerDestroyed = attackerDestroyed;
+  combatResult.defenderDestroyed = defenderDestroyed;
+
   const updatedState = applyCombatResult(
     gameState,
     attackerPlayerIndex,
@@ -283,6 +494,7 @@ export function processAttack(gameState, attackerPlayerIndex, attackerCardIndex,
     success: true,
     gameState: updatedState,
     combatResult,
+    effectMessages,
   };
 }
 
@@ -315,6 +527,124 @@ export function incrementTurnsOnBoard(playerState) {
   });
 }
 
+/**
+ * Process standby phase effects
+ * @param {Object} gameState - Current game state
+ * @param {number} playerIndex - Current player index
+ * @returns {Object} - { gameState, effectMessages }
+ */
+export function processStandbyPhase(gameState, playerIndex) {
+  const effectMessages = [];
+
+  // Trigger ON_STANDBY_PHASE effects
+  const standbyEffects = triggerEffects(gameState.gameId || 'default', 'ON_STANDBY_PHASE', {
+    gameState,
+    playerIndex,
+    opponentIndex: playerIndex === 0 ? 1 : 0,
+  });
+
+  if (standbyEffects.length > 0) {
+    const result = applyEffects(gameState, standbyEffects);
+    gameState = result.gameState;
+    effectMessages.push(...result.messages);
+  }
+
+  return { gameState, effectMessages };
+}
+
+/**
+ * Process end phase effects
+ * @param {Object} gameState - Current game state
+ * @param {number} playerIndex - Current player index
+ * @returns {Object} - { gameState, effectMessages }
+ */
+export function processEndPhase(gameState, playerIndex) {
+  const effectMessages = [];
+
+  // Trigger ON_END_PHASE effects
+  const endEffects = triggerEffects(gameState.gameId || 'default', 'ON_END_PHASE', {
+    gameState,
+    playerIndex,
+    opponentIndex: playerIndex === 0 ? 1 : 0,
+  });
+
+  if (endEffects.length > 0) {
+    const result = applyEffects(gameState, endEffects);
+    gameState = result.gameState;
+    effectMessages.push(...result.messages);
+  }
+
+  // Process revives at end phase
+  const effectState = getEffectState(gameState.gameId || 'default');
+  if (effectState.reviveAtEndPhase && effectState.reviveAtEndPhase.length > 0) {
+    for (const revive of effectState.reviveAtEndPhase) {
+      if (revive.playerIndex === playerIndex) {
+        const player = gameState.players[revive.playerIndex];
+        // Find empty slot
+        const emptySlot = player.field.champions.findIndex(c => c === null);
+        if (emptySlot >= 0) {
+          player.field.champions[emptySlot] = {
+            card: revive.card,
+            turnsOnBoard: 0,
+            hasAttacked: false,
+            position: revive.position || 'DEFENSE',
+            currentAttack: revive.card.attack,
+            currentDefense: revive.card.defense,
+            equippedItems: [],
+          };
+          effectMessages.push(`${revive.card.name} revived in ${revive.position} position!`);
+        }
+      }
+    }
+    // Clear processed revives
+    effectState.reviveAtEndPhase = effectState.reviveAtEndPhase.filter(r => r.playerIndex !== playerIndex);
+  }
+
+  // Process marked for destruction
+  if (effectState.markedForDestruction && effectState.markedForDestruction.length > 0) {
+    for (const mark of effectState.markedForDestruction) {
+      if (mark.playerIndex === playerIndex) {
+        const player = gameState.players[mark.playerIndex];
+        const champion = player.field.champions[mark.fieldIndex];
+        if (champion) {
+          player.graveyard.push(champion.card);
+          player.field.champions[mark.fieldIndex] = null;
+          effectMessages.push(`${champion.card.name} was destroyed!`);
+        }
+      }
+    }
+    // Clear processed destructions
+    effectState.markedForDestruction = effectState.markedForDestruction.filter(m => m.playerIndex !== playerIndex);
+  }
+
+  return { gameState, effectMessages };
+}
+
+/**
+ * Process draw phase effects
+ * @param {Object} gameState - Current game state
+ * @param {number} playerIndex - Current player index
+ * @returns {Object} - { gameState, effectMessages }
+ */
+export function processDrawPhase(gameState, playerIndex) {
+  const effectMessages = [];
+
+  // Trigger ON_DRAW_PHASE effects
+  const drawEffects = triggerEffects(gameState.gameId || 'default', 'ON_DRAW_PHASE', {
+    gameState,
+    playerIndex,
+    opponentIndex: playerIndex === 0 ? 1 : 0,
+  });
+
+  if (drawEffects.length > 0) {
+    const result = applyEffects(gameState, drawEffects);
+    gameState = result.gameState;
+    effectMessages.push(...result.messages);
+  }
+
+  return { gameState, effectMessages };
+}
+
 export default {
   getEffectiveAttack,
   getEffectiveDefense,
@@ -326,4 +656,7 @@ export default {
   processAttack,
   resetTurnCombatFlags,
   incrementTurnsOnBoard,
+  processStandbyPhase,
+  processEndPhase,
+  processDrawPhase,
 };

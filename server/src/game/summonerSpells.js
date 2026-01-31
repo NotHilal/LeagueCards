@@ -155,8 +155,8 @@ export function useHeal(gameState, playerIndex) {
     return { success: false, gameState, error: 'Heal not available or already used' };
   }
 
-  // Restore HP (cap at 8000)
-  player.lifePoints = Math.min(8000, player.lifePoints + SPELL_EFFECTS.HEAL.heal);
+  // Restore HP (no cap - can exceed 8000)
+  player.lifePoints = player.lifePoints + SPELL_EFFECTS.HEAL.heal;
 
   // Mark spell as used
   markSpellUsed(player, healSpell.id);
